@@ -1,4 +1,7 @@
-"""Seed ~14 months of demo data:  python seed.py [--reset] [--user NAME]"""
+"""Seed ~14 months of demo data:  python seed.py [--reset] [--user NAME] [--from-demo]
+
+--from-demo installs the committed demo/demo.db as user "Demo" instead of generating random data.
+"""
 import os
 import random
 import sys
@@ -51,6 +54,20 @@ def main(reset=False, user="Demo"):
     print("Seeded", len(db.get_entries()), "entries for", user)
 
 
+def install_demo(reset=False):
+    """Copy the committed sample database into data/ as the 'Demo' user."""
+    import shutil
+    path = db.user_path("Demo")
+    if os.path.exists(path) and not reset:
+        raise SystemExit("Demo user already exists (use --reset to replace it).")
+    os.makedirs(db.DATA_DIR, exist_ok=True)
+    shutil.copyfile(os.path.join(db.BASE_DIR, "demo", "demo.db"), path)
+    print("Installed demo user from demo/demo.db")
+
+
 if __name__ == "__main__":
+    if "--from-demo" in sys.argv:
+        install_demo("--reset" in sys.argv)
+        raise SystemExit
     name = sys.argv[sys.argv.index("--user") + 1] if "--user" in sys.argv else "Demo"
     main("--reset" in sys.argv, name)

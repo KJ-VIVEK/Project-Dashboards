@@ -9,6 +9,9 @@
 data/
 backups/
 
+# the one intentional exception: the fake sample database shipped with the repo
+!ExpenseTracker/demo/demo.db
+
 # ---- environments & caches ----
 .venv/
 __pycache__/

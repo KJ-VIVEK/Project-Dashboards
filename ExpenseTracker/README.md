@@ -12,12 +12,14 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # then, from Dashboards/ExpenseTracker/  (Streamlit reads .streamlit/config.toml from here)
 ../.venv/bin/streamlit run app.py
-../.venv/bin/python seed.py --user Demo --reset   # optional demo data
+../.venv/bin/python seed.py --from-demo           # install the sample 'Demo' user (demo/demo.db)
+../.venv/bin/python seed.py --user Demo --reset   # or generate fresh random demo data
 ../.venv/bin/python -m pytest -q
 ```
 
 ## Keeping your data safe (it is never committed)
 The root `.gitignore` excludes `*.db`, `data/`, `backups/`, `*.csv` for every dashboard.
+The only database in git is `demo/demo.db` — fake sample data, safe to share.
 
 1. **Automatic snapshots**: one per day on app start and one before every delete → `backups/<user>/`.
    Restore from the app's **Backup** page.
