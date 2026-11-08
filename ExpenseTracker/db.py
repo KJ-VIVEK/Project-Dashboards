@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS entries (
     amount REAL NOT NULL CHECK (amount >= 0),
     note TEXT DEFAULT '',
     tag TEXT DEFAULT '',
-    fixed_item_id INTEGER
+    fixed_item_id INTEGER,
+    method TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS fixed_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +47,10 @@ CREATE TABLE IF NOT EXISTS fixed_items (
     amount REAL NOT NULL CHECK (amount >= 0),
     frequency TEXT NOT NULL,
     next_due TEXT NOT NULL,
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    end_date TEXT,
+    anchor_day INTEGER,
+    method TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -143,14 +147,29 @@ def normalize_existing(path=None) -> None:
                 c.execute("UPDATE budgets SET category=? WHERE category=?", (cat, r["category"]))
 
 
+_MIGRATIONS = {
+    "entries": {"method": "TEXT DEFAULT ''"},
+    "fixed_items": {"end_date": "TEXT", "anchor_day": "INTEGER", "method": "TEXT DEFAULT ''"},
+}
+
+
+def _migrate(c) -> None:
+    for table, cols in _MIGRATIONS.items():
+        have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+        for col, ddl in cols.items():
+            if col not in have:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+
+
 def init_db(path: str | None = None) -> None:
     with connect(path) as c:
         c.executescript(SCHEMA)
+        _migrate(c)
     normalize_existing(path)
 
 
 # ---------- entries ----------
-def add_entry(date_, type_, category, amount, note="", tag="", fixed_item_id=None, path=None):
+def add_entry(date_, type_, category, amount, note="", tag="", fixed_item_id=None, method="", path=None):
     if type_ not in ENTRY_TYPES:
         raise ValueError(f"type must be one of {ENTRY_TYPES}")
     category = _canonical(category, _distinct("category", path=path))
@@ -160,8 +179,9 @@ def add_entry(date_, type_, category, amount, note="", tag="", fixed_item_id=Non
     tag = ", ".join(known.get(t.casefold(), t) for t in split_tags(tag))
     with connect(path) as c:
         c.execute(
-            "INSERT INTO entries(date,type,category,amount,note,tag,fixed_item_id) VALUES (?,?,?,?,?,?,?)",
-            (str(date_), type_, category, float(amount), note.strip(), tag, fixed_item_id),
+            "INSERT INTO entries(date,type,category,amount,note,tag,fixed_item_id,method) VALUES (?,?,?,?,?,?,?,?)",
+            (str(date_), type_, category, float(amount), note.strip(), tag, fixed_item_id,
+             "" if type_ == "inflow" else fmt(method)),
         )
 
 
@@ -178,15 +198,20 @@ def get_entries(path=None) -> pd.DataFrame:
 
 
 # ---------- fixed items ----------
-def add_fixed_item(name, category, amount, frequency, next_due, path=None):
+def add_fixed_item(name, category, amount, frequency, next_due, end_date=None, method="", path=None):
+    """`next_due` is the first charge date; `end_date` (optional) is the last day a charge may fall on."""
     if frequency not in FREQUENCIES:
         raise ValueError(f"frequency must be one of {list(FREQUENCIES)}")
+    start = date.fromisoformat(str(next_due))
+    if end_date and date.fromisoformat(str(end_date)) < start:
+        raise ValueError("End date is before the start date")
+    cat = _canonical(category, _distinct("category", path=path) + _distinct("category", "fixed_items", path))
     with connect(path) as c:
         c.execute(
-            "INSERT INTO fixed_items(name,category,amount,frequency,next_due) VALUES (?,?,?,?,?)",
-            (fmt(name), _canonical(category, _distinct("category", path=path)
-                                   + _distinct("category", "fixed_items", path)),
-             float(amount), frequency, str(next_due)),
+            "INSERT INTO fixed_items(name,category,amount,frequency,next_due,end_date,anchor_day,method)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (fmt(name), cat, float(amount), frequency, str(start), str(end_date) if end_date else None,
+             start.day, fmt(method)),
         )
 
 
@@ -205,35 +230,68 @@ def delete_fixed_item(item_id, path=None):
         c.execute("DELETE FROM fixed_items WHERE id=?", (item_id,))
 
 
-def _advance(due: date, frequency: str) -> date:
-    if frequency == "monthly":
-        m = due.month % 12 + 1
-        y = due.year + (due.month == 12)
-        day = min(due.day, [31, 29 if y % 4 == 0 and (y % 100 or y % 400 == 0) else 28,
-                            31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1])
-        return date(y, m, day)
-    if frequency == "yearly":
-        try:
-            return due.replace(year=due.year + 1)
-        except ValueError:  # Feb 29
-            return due.replace(year=due.year + 1, day=28)
+_MONTH_STEP = {"monthly": 1, "quarterly": 3, "yearly": 12}
+
+
+def _add_months(d: date, months: int, anchor_day: int | None = None) -> date:
+    """Calendar-aware month arithmetic that remembers the intended day (31st -> Feb 28 -> Mar 31)."""
+    y, m = divmod(d.year * 12 + d.month - 1 + months, 12)
+    m += 1
+    last = (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).day
+    return date(y, m, min(anchor_day or d.day, last))
+
+
+def _advance(due: date, frequency: str, anchor_day: int | None = None) -> date:
+    if frequency in _MONTH_STEP:
+        return _add_months(due, _MONTH_STEP[frequency], anchor_day)
     return due + timedelta(days=FREQUENCIES[frequency])
 
 
+def _anchor(it) -> int | None:
+    a = it.get("anchor_day") if hasattr(it, "get") else None
+    return None if a is None or a != a else int(a)  # NaN-safe
+
+
+def _end(it) -> date | None:
+    e = it.get("end_date") if hasattr(it, "get") else None
+    return date.fromisoformat(e) if isinstance(e, str) and e else None
+
+
 def post_due_fixed(today: date | None = None, path=None) -> int:
-    """Auto-post every active fixed item whose due date has passed. Returns count posted."""
+    """Post every charge that has come due (also those missed while the app was closed).
+
+    Runs in one write transaction (BEGIN IMMEDIATE) so two devices opening the app at the same
+    moment cannot post the same charge twice. Items past their end date are retired.
+    """
     today = today or date.today()
+    p = path or get_active()
+    if p is None:
+        raise RuntimeError("No active user: call db.set_active(path) first")
+    conn = sqlite3.connect(p, timeout=15, isolation_level=None)
+    conn.row_factory = sqlite3.Row
     posted = 0
-    items = get_fixed_items(path)
-    for _, it in items[items["active"] == 1].iterrows():
-        due = date.fromisoformat(it["next_due"])
-        while due <= today:
-            add_entry(due, "fixed", it["category"], it["amount"], note=it["name"],
-                      fixed_item_id=int(it["id"]), path=path)
-            posted += 1
-            due = _advance(due, it["frequency"])
-        with connect(path) as c:
-            c.execute("UPDATE fixed_items SET next_due=? WHERE id=?", (str(due), int(it["id"])))
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for it in conn.execute("SELECT * FROM fixed_items WHERE active=1").fetchall():
+            it = dict(it)
+            due, end, anchor = date.fromisoformat(it["next_due"]), _end(it), _anchor(it)
+            while due <= today and (end is None or due <= end):
+                conn.execute(
+                    "INSERT INTO entries(date,type,category,amount,note,tag,fixed_item_id,method) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (str(due), "fixed", it["category"], it["amount"], it["name"], "", it["id"],
+                     it.get("method") or ""))
+                posted += 1
+                due = _advance(due, it["frequency"], anchor)
+            finished = end is not None and due > end
+            conn.execute("UPDATE fixed_items SET next_due=?, active=? WHERE id=?",
+                         (str(due), 0 if finished else 1, it["id"]))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
     return posted
 
 

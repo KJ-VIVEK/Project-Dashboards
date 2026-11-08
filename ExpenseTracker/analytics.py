@@ -118,18 +118,18 @@ def detect_alerts(entries: pd.DataFrame, today: date | None = None, window: int 
 
 def upcoming_fixed(fixed_items: pd.DataFrame, today: date | None = None, days: int = 30) -> pd.DataFrame:
     """Occurrences of active fixed items due within `days` (a short-cycle item may repeat)."""
-    from db import _advance  # local import keeps analytics usable without db at import time
+    from db import _advance, _anchor as db_anchor, _end as db_end  # local import: analytics works without db at import
 
     today = today or date.today()
     end = today + timedelta(days=days)
     rows = []
     for _, it in fixed_items[fixed_items["active"] == 1].iterrows():
-        due = date.fromisoformat(it["next_due"])
-        while due <= end:
+        due, last, anchor = date.fromisoformat(it["next_due"]), db_end(it), db_anchor(it)
+        while due <= end and (last is None or due <= last):
             if due >= today:
                 rows.append({"name": it["name"], "category": it["category"], "amount": it["amount"],
                              "due": due, "in_days": (due - today).days})
-            due = _advance(due, it["frequency"])
+            due = _advance(due, it["frequency"], anchor)
     out = pd.DataFrame(rows, columns=["name", "category", "amount", "due", "in_days"])
     return out.sort_values("due").reset_index(drop=True)
 

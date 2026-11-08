@@ -44,6 +44,9 @@ DEFAULT_CATEGORIES = {
     "variable": ["Dining", "Groceries", "Transport", "Shopping", "Entertainment", "Travel", "Medical"],
 }
 DEFAULT_TAGS = ["Habit", "Unplanned", "Impromptu", "Medical", "Trip"]
+DEFAULT_METHODS = ["Credit Card", "Debit Card", "UPI", "Cash", "Net Banking"]
+FREQ_LABEL = {"weekly": "Every week", "biweekly": "Every 2 weeks", "monthly": "Every month",
+              "quarterly": "Every 3 months", "yearly": "Every year"}
 
 
 def merge_options(*lists):
@@ -55,9 +58,24 @@ def merge_options(*lists):
     return sorted(seen.values(), key=str.casefold)
 
 
+def methods_used():
+    used = entries.loc[entries["method"] != "", "method"].unique().tolist() if not entries.empty else []
+    return merge_options(DEFAULT_METHODS, used, fixed_items["method"].dropna().tolist() if not fixed_items.empty else [])
+
+
 def categories_for(types):
     used = entries.loc[entries["type"].isin(types), "category"].unique().tolist() if not entries.empty else []
     return merge_options(used, *[DEFAULT_CATEGORIES[t] for t in types])
+
+
+def form_key(name):
+    """Forms keep what you typed if validation fails; after a successful save the key changes, which resets them."""
+    return f"{name}_{st.session_state.setdefault('_fv', {}).get(name, 0)}"
+
+
+def reset_form(name):
+    fv = st.session_state.setdefault("_fv", {})
+    fv[name] = fv.get(name, 0) + 1
 
 
 def joke(text):
@@ -143,7 +161,7 @@ def entry_editor(df: pd.DataFrame, key: str, height="auto"):
     if df.empty:
         st.caption("No entries yet.")
         return
-    view = df[["id", "date", "type", "category", "amount", "tag", "note"]].copy()
+    view = df[["id", "date", "type", "category", "amount", "method", "tag", "note"]].copy()
     view["date"] = view["date"].dt.date
     view["type"] = view["type"].map(TYPE_LABEL)
     view.insert(0, "delete", False)
@@ -151,7 +169,7 @@ def entry_editor(df: pd.DataFrame, key: str, height="auto"):
         view, hide_index=True, key=key, height=height, width="stretch",
         disabled=[c for c in view.columns if c != "delete"],
         column_config={"delete": st.column_config.CheckboxColumn("Delete", width="small"),
-                       "id": None, "category": "Category / source", "tag": "Tags",
+                       "id": None, "category": "Category / source", "method": "Paid with", "tag": "Tags",
                        "amount": st.column_config.NumberColumn("Amount", format="₹%.0f")})
     ids = edited.loc[edited["delete"], "id"].tolist()
     if st.button(f"Delete {len(ids)} selected" if ids else "Delete selected", icon=":material/delete:",
@@ -249,31 +267,33 @@ if page == "Dashboard":
 # =============================================================== Add entry
 elif page == "Add entry":
     st.title("Add entry")
-    # These two sit outside the form so the fields below can change as soon as you switch.
+    st.caption("For one-off money in or out. Recurring bills (rent, EMI, subscriptions…) belong under "
+               "**Fixed items**, where they are added for you automatically.")
+    # Outside the form so the fields below change as soon as you switch.
     money = st.segmented_control("Money", ["Income", "Expense"], default="Expense") or "Expense"
-    if money == "Expense":
-        kind = st.segmented_control("Expense type", ["Fixed", "Variable"], default="Variable") or "Variable"
-        t = kind.lower()
-    else:
-        t = "inflow"
-    with st.form(f"entry_{t}", clear_on_submit=True):
+    t = "inflow" if money == "Income" else "variable"
+    with st.form(form_key(f"entry_{t}")):
         c = st.columns(3)
         d = c[0].date_input("Date", today)
         amt = c[1].number_input("Amount (₹)", min_value=0.0, step=100.0)
         cat = c[2].selectbox(
             "Source of income" if t == "inflow" else "Category", categories_for([t]), index=None,
             accept_new_options=True, placeholder="Pick one, or type a new one and press Enter")
-        tags = []
+        tags, method = [], ""
         if t != "inflow":
-            tags = st.multiselect("Tags", merge_options(DEFAULT_TAGS, db.all_tags()), accept_new_options=True,
-                                  placeholder="Optional. Pick, or type a new tag and press Enter")
+            c = st.columns(2)
+            method = c[0].selectbox("Paid with", methods_used(), index=None, accept_new_options=True,
+                                    placeholder="Credit card, debit card, UPI…") or ""
+            tags = c[1].multiselect("Tags", merge_options(DEFAULT_TAGS, db.all_tags()), accept_new_options=True,
+                                    placeholder="Optional. Pick, or type a new tag")
         note = st.text_input("Note")
         if st.form_submit_button("Save", icon=":material/check:"):
             if not cat or not cat.strip() or amt <= 0:
                 st.error("A category/source and a positive amount are required.")
             else:
-                db.add_entry(d, t, cat, amt, note, tags)
-                st.toast(f"Saved {TYPE_LABEL[t].lower()}: {db.fmt(cat)} {inr(amt)}", icon=":material/check_circle:")
+                db.add_entry(d, t, cat, amt, note, tags, method=method)
+                reset_form(f"entry_{t}")
+                st.toast(f"Saved {money.lower()}: {db.fmt(cat)} {inr(amt)}", icon=":material/check_circle:")
                 st.rerun()
     st.subheader("Recent entries")
     st.caption("Tick rows and delete — mistakes are one click away from gone (and recoverable from Backup).")
@@ -282,18 +302,32 @@ elif page == "Add entry":
 # =============================================================== Fixed items
 elif page == "Fixed items":
     st.title("Fixed expenses")
-    st.caption("Recurring items are posted to your entries automatically when they fall due.")
-    with st.form("fx", clear_on_submit=True):
-        c = st.columns(5, vertical_alignment="bottom")
-        n = c[0].text_input("Name")
+    st.caption("Add a recurring bill once. It is posted to your entries on each due date, and anything due while "
+               "the app was closed is added when you next open it — so nothing slips through.")
+    with st.form(form_key("fx")):
+        c = st.columns(3)
+        n = c[0].text_input("Name", placeholder="e.g. Home loan EMI")
         cat = c[1].selectbox("Category", categories_for(["fixed"]), index=None, accept_new_options=True,
                              placeholder="Pick or type")
         a = c[2].number_input("Amount (₹)", min_value=0.0, step=100.0)
-        f = c[3].selectbox("Frequency", list(db.FREQUENCIES), index=2)
-        nd = c[4].date_input("Next due", today)
-        if st.form_submit_button("Add", icon=":material/add:") and n.strip() and cat and cat.strip() and a > 0:
-            db.add_fixed_item(n, cat, a, f, nd)
-            st.rerun()
+        c = st.columns(4)
+        f = c[0].selectbox("How often?", list(FREQ_LABEL), index=None, format_func=FREQ_LABEL.get,
+                           placeholder="Choose frequency")
+        nd = c[1].date_input("Starts on", today, help="Date of the first charge. Later charges repeat from it.")
+        ed = c[2].date_input("Ends on (optional)", value=None, help="Leave empty if it never ends, e.g. rent. "
+                             "Set it for things like the last EMI.")
+        pm = c[3].selectbox("Paid with", methods_used(), index=None, accept_new_options=True,
+                            placeholder="Optional")
+        if st.form_submit_button("Add", icon=":material/add:"):
+            if not n.strip() or not cat or not cat.strip() or a <= 0 or not f:
+                st.error("Name, category, a positive amount and how often it repeats are all required.")
+            elif ed and ed < nd:
+                st.error("The end date is before the start date.")
+            else:
+                db.add_fixed_item(n, cat, a, f, nd, end_date=ed, method=pm or "")
+                reset_form("fx")
+                st.toast(f"Added {db.fmt(n)} — {FREQ_LABEL[f].lower()} from {nd:%d %b %Y}", icon=":material/event_repeat:")
+                st.rerun()
     if not fixed_items.empty:
         act = fixed_items[fixed_items["active"] == 1]
         mult = {"weekly": 52 / 12, "biweekly": 26 / 12, "monthly": 1, "quarterly": 1 / 3, "yearly": 1 / 12}
@@ -303,10 +337,14 @@ elif page == "Fixed items":
             st.metric("Per year", inr(monthly * 12), border=True)
         for _, it in fixed_items.iterrows():
             with st.container(border=True, horizontal=True, vertical_alignment="center"):
+                ended = bool(it["end_date"]) and it["next_due"] > it["end_date"]
+                status = "  \n*ended*" if ended else "" if it["active"] else "  \n*paused*"
+                nxt = "" if ended else f" · next {it['next_due']}"
+                until = f" · until {it['end_date']}" if it["end_date"] else ""
+                via = f" · {it['method']}" if it["method"] else ""
                 st.markdown(f"**{it['name']}** · {it['category']}  \n"
-                            f"{inr(it['amount'])} · {it['frequency']} · next {it['next_due']}"
-                            + ("" if it["active"] else "  \n*paused*"))
-                if st.button("Resume" if not it["active"] else "Pause", key=f"t{it['id']}",
+                            f"{inr(it['amount'])} · {FREQ_LABEL[it['frequency']].lower()}{nxt}{until}{via}{status}")
+                if not ended and st.button("Resume" if not it["active"] else "Pause", key=f"t{it['id']}",
                              icon=":material/play_arrow:" if not it["active"] else ":material/pause:"):
                     db.set_fixed_active(int(it["id"]), not it["active"])
                     st.rerun()
@@ -317,13 +355,14 @@ elif page == "Fixed items":
 # =============================================================== Budgets
 elif page == "Budgets":
     st.title("Budgets")
-    with st.form("bg", clear_on_submit=True):
+    with st.form(form_key("bg")):
         c = st.columns(3, vertical_alignment="bottom")
         cat = c[0].selectbox("Category", categories_for(["fixed", "variable"]), index=None,
                              accept_new_options=True, placeholder="Pick or type")
         a = c[1].number_input("Monthly budget (₹)", min_value=0.0, step=500.0)
         if c[2].form_submit_button("Set", icon=":material/check:") and cat and cat.strip():
             db.set_budget(cat, a)
+            reset_form("bg")
             st.rerun()
     for _, b in an.budget_status(entries, budgets).iterrows():
         with st.container(border=True):
@@ -368,6 +407,15 @@ elif page == "Insights":
         if m is not None and bal > 0:
             st.metric("Months of expenses covered", f"{m:.1f}")
             joke(cap.fund(m, seed))
+    pay = (entries[entries["type"] != "inflow"].assign(method=lambda d: d["method"].replace("", "Not Specified"))
+           .groupby("method")["amount"].sum().sort_values())
+    if not pay.empty:
+        fig = go.Figure(go.Bar(x=pay.values, y=pay.index, orientation="h", marker_color=C_OUT))
+        fig.update_layout(hovermode="closest")
+        show(style(fig, "Spend by payment method (all time)"), "Horizontal bars of spend per payment method")
+        if "Credit Card" in pay.index:
+            st.write(f"**{pay['Credit Card'] / pay.sum() * 100:.0f}%** of spend went on the credit card "
+                     f"({inr(pay['Credit Card'])}) — make sure the bill is covered.")
     inc = entries[entries["type"] == "inflow"].groupby("category")["amount"].sum().sort_values()
     if not inc.empty:
         fig = go.Figure(go.Bar(x=inc.values, y=inc.index, orientation="h", marker_color=C_IN))

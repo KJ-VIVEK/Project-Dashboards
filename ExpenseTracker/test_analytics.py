@@ -142,3 +142,68 @@ def test_normalize_existing_merges_case_variants(path):
     db.init_db(path)
     df = db.get_entries(path)
     assert set(df["category"]) == {"Dining"} and set(df["tag"]) == {"Habit", "Habit, Trip"}
+
+
+def test_monthly_day_does_not_drift(path):
+    db.add_fixed_item("Rent", "Rent", 100, "monthly", "2026-01-31", path=path)
+    db.post_due_fixed(today=date(2026, 5, 31), path=path)
+    days = sorted(db.get_entries(path)["date"].dt.strftime("%m-%d"))
+    assert days == ["01-31", "02-28", "03-31", "04-30", "05-31"]
+
+
+def test_quarterly_and_yearly_are_calendar_based(path):
+    assert db._advance(date(2026, 1, 15), "quarterly") == date(2026, 4, 15)
+    assert db._advance(date(2026, 11, 30), "quarterly") == date(2027, 2, 28)
+    assert db._advance(date(2024, 2, 29), "yearly") == date(2025, 2, 28)
+    assert db._advance(date(2026, 3, 1), "weekly") == date(2026, 3, 8)
+
+
+def test_end_date_stops_posting_and_retires_item(path):
+    db.add_fixed_item("Car EMI", "EMI", 500, "monthly", "2026-01-10", end_date="2026-03-20", method="debit card", path=path)
+    assert db.post_due_fixed(today=date(2026, 12, 1), path=path) == 3  # Jan, Feb, Mar only
+    df = db.get_entries(path)
+    assert set(df["method"]) == {"Debit Card"}
+    item = db.get_fixed_items(path).iloc[0]
+    assert item["active"] == 0
+    assert an.upcoming_fixed(db.get_fixed_items(path).assign(active=1), today=date(2026, 12, 1), days=90).empty
+
+
+def test_end_before_start_rejected(path):
+    with pytest.raises(ValueError):
+        db.add_fixed_item("X", "X", 1, "monthly", "2026-05-01", end_date="2026-04-01", path=path)
+
+
+def test_payment_method_only_on_expenses(path):
+    db.add_entry("2026-01-01", "inflow", "Salary", 10, method="upi", path=path)
+    db.add_entry("2026-01-02", "variable", "Dining", 5, method="credit card", path=path)
+    df = db.get_entries(path).set_index("category")
+    assert df.loc["Salary", "method"] == "" and df.loc["Dining", "method"] == "Credit Card"
+
+
+def test_migrates_old_database(tmp_path):
+    import sqlite3
+    p = str(tmp_path / "old.db")
+    c = sqlite3.connect(p)
+    c.executescript("""CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, type TEXT NOT NULL,
+        category TEXT NOT NULL, amount REAL NOT NULL, note TEXT DEFAULT '', tag TEXT DEFAULT '', fixed_item_id INTEGER);
+        CREATE TABLE fixed_items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL,
+        amount REAL NOT NULL, frequency TEXT NOT NULL, next_due TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
+        INSERT INTO fixed_items(name,category,amount,frequency,next_due) VALUES ('Gym','Gym',1,'monthly','2026-01-05');""")
+    c.commit(); c.close()
+    db.init_db(p)
+    assert db.post_due_fixed(today=date(2026, 3, 10), path=p) == 3
+    assert list(db.get_entries(p)["method"]) == ["", "", ""]
+
+
+def test_concurrent_sessions_do_not_double_post(path):
+    import threading
+    db.add_fixed_item("Gym", "Gym", 1, "monthly", "2026-01-05", path=path)
+    barrier = threading.Barrier(4)
+
+    def go():
+        barrier.wait()
+        db.post_due_fixed(today=date(2026, 3, 10), path=path)
+
+    ts = [threading.Thread(target=go) for _ in range(4)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    assert len(db.get_entries(path)) == 3  # Jan, Feb, Mar - once each
