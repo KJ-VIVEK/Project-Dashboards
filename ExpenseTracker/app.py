@@ -47,6 +47,14 @@ st.session_state.setdefault("unlocked", set())
 
 with st.sidebar:
     st.markdown("### :material/account_balance_wallet: Expense Tracker")
+    # A widget's key can't be assigned after the widget exists, so other code leaves a request here
+    # and it is applied before the selectbox below is created.
+    if "_pick_user" in st.session_state:
+        wanted = st.session_state.pop("_pick_user")
+        if wanted:
+            st.session_state["who"] = wanted
+        else:
+            st.session_state.pop("who", None)
     if users:
         names = [u["name"] for u in users]
         who = st.selectbox("User", names, key="who", label_visibility="collapsed")
@@ -60,7 +68,7 @@ with st.sidebar:
             if st.form_submit_button("Create", width="stretch"):
                 try:
                     db.create_user(nu, pin)
-                    st.session_state["who"] = nu.strip()
+                    st.session_state["_pick_user"] = nu.strip()
                     st.rerun()
                 except ValueError as e:
                     st.error(str(e))
@@ -378,5 +386,5 @@ else:
         if st.button("Delete user permanently", type="primary"):
             db.backup()
             db.delete_user(current["path"])
-            st.session_state.pop("who", None)
+            st.session_state["_pick_user"] = None
             st.rerun()
