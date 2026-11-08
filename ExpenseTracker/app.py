@@ -37,6 +37,29 @@ def inr(v):
     return f"₹{v:,.0f}"
 
 
+TYPE_LABEL = {"inflow": "Income", "fixed": "Fixed", "variable": "Variable"}
+DEFAULT_CATEGORIES = {
+    "inflow": ["Salary", "Bonus", "Freelance", "Interest", "Dividends", "Gift", "Refund", "Rental"],
+    "fixed": ["Subscriptions", "EMI", "SIP", "Gym", "Fuel", "Protein", "Rent", "Insurance"],
+    "variable": ["Dining", "Groceries", "Transport", "Shopping", "Entertainment", "Travel", "Medical"],
+}
+DEFAULT_TAGS = ["Habit", "Unplanned", "Impromptu", "Medical", "Trip"]
+
+
+def merge_options(*lists):
+    """Union of option lists, Letter Case, no case-duplicates (first spelling wins), sorted."""
+    seen = {}
+    for lst in lists:
+        for v in lst:
+            seen.setdefault(db.fmt(v).casefold(), db.fmt(v))
+    return sorted(seen.values(), key=str.casefold)
+
+
+def categories_for(types):
+    used = entries.loc[entries["type"].isin(types), "category"].unique().tolist() if not entries.empty else []
+    return merge_options(used, *[DEFAULT_CATEGORIES[t] for t in types])
+
+
 def joke(text):
     st.caption(f":material/sentiment_satisfied: *{text}*")
 
@@ -122,12 +145,14 @@ def entry_editor(df: pd.DataFrame, key: str, height="auto"):
         return
     view = df[["id", "date", "type", "category", "amount", "tag", "note"]].copy()
     view["date"] = view["date"].dt.date
+    view["type"] = view["type"].map(TYPE_LABEL)
     view.insert(0, "delete", False)
     edited = st.data_editor(
         view, hide_index=True, key=key, height=height, width="stretch",
         disabled=[c for c in view.columns if c != "delete"],
         column_config={"delete": st.column_config.CheckboxColumn("Delete", width="small"),
-                       "id": None, "amount": st.column_config.NumberColumn("Amount", format="₹%.0f")})
+                       "id": None, "category": "Category / source", "tag": "Tags",
+                       "amount": st.column_config.NumberColumn("Amount", format="₹%.0f")})
     ids = edited.loc[edited["delete"], "id"].tolist()
     if st.button(f"Delete {len(ids)} selected" if ids else "Delete selected", icon=":material/delete:",
                  disabled=not ids, key=f"{key}_btn"):
@@ -160,17 +185,17 @@ if page == "Dashboard":
     ratio = None if pd.isna(row["fixed_ratio"]) else row["fixed_ratio"]
     st.caption(f"{row.name:%B %Y}")
     with st.container(horizontal=True):
-        st.metric("Inflow", inr(row["inflow"]), delta("inflow"), border=True)
+        st.metric("Income", inr(row["inflow"]), delta("inflow"), border=True)
         st.metric("Outflow", inr(row["outflow"]), delta("outflow"), delta_color="inverse", border=True)
         st.metric("Net", inr(row["net"]), delta("net"), border=True)
         st.metric("Savings rate", "–" if rate is None else f"{rate * 100:.0f}%", border=True)
-        st.metric("Fixed ÷ inflow", "–" if ratio is None else f"{ratio * 100:.0f}%", border=True)
+        st.metric("Fixed ÷ income", "–" if ratio is None else f"{ratio * 100:.0f}%", border=True)
 
     with st.container(border=True):
         st.markdown("**Reading of the month**")
         bits = []
         if rate is not None:
-            bits.append(f"You kept **{rate * 100:.0f}%** of inflow ({inr(row['net'])} net).")
+            bits.append(f"You kept **{rate * 100:.0f}%** of income ({inr(row['net'])} net).")
         if row["outflow"]:
             bits.append(f"Variable spend is **{row['variable'] / row['outflow'] * 100:.0f}%** of outflow; "
                         f"fixed commitments are **{inr(row['fixed'])}**.")
@@ -185,12 +210,12 @@ if page == "Dashboard":
     c_left, c_right = st.columns([3, 2], gap="medium")
     with c_left:
         fig = go.Figure()
-        fig.add_bar(x=ms.index, y=ms["inflow"], name="Inflow", marker_color=C_IN)
+        fig.add_bar(x=ms.index, y=ms["inflow"], name="Income", marker_color=C_IN)
         fig.add_bar(x=ms.index, y=ms["outflow"], name="Outflow", marker_color=C_OUT)
         fig.add_scatter(x=ms.index, y=ms["net"], name="Net", mode="lines+markers",
                         line=dict(color=MUTED, width=2), marker=dict(size=8))
         fig.update_layout(barmode="group", bargap=0.35)
-        show(style(fig, "Inflow vs outflow"), "Monthly inflow and outflow bars with net line")
+        show(style(fig, "Income vs outflow"), "Monthly income and outflow bars with net line")
     with c_right:
         with st.container(border=True, height=320):
             st.markdown("**Coming up (30 days)**")
@@ -224,24 +249,31 @@ if page == "Dashboard":
 # =============================================================== Add entry
 elif page == "Add entry":
     st.title("Add entry")
-    known = sorted(entries["category"].unique()) if not entries.empty else []
-    with st.form("entry", clear_on_submit=True):
+    # These two sit outside the form so the fields below can change as soon as you switch.
+    money = st.segmented_control("Money", ["Income", "Expense"], default="Expense") or "Expense"
+    if money == "Expense":
+        kind = st.segmented_control("Expense type", ["Fixed", "Variable"], default="Variable") or "Variable"
+        t = kind.lower()
+    else:
+        t = "inflow"
+    with st.form(f"entry_{t}", clear_on_submit=True):
         c = st.columns(3)
         d = c[0].date_input("Date", today)
-        t = c[1].segmented_control("Type", ["inflow", "fixed", "variable"], default="variable")
-        amt = c[2].number_input("Amount (₹)", min_value=0.0, step=100.0)
-        c = st.columns(3)
-        pick = c[0].selectbox("Category", ["(new)"] + known)
-        new = c[1].text_input("New category", help="Used when Category is '(new)'")
-        tag = c[2].selectbox("Tag", ["", "habit", "unplanned", "impromptu", "medical", "trip"])
+        amt = c[1].number_input("Amount (₹)", min_value=0.0, step=100.0)
+        cat = c[2].selectbox(
+            "Source of income" if t == "inflow" else "Category", categories_for([t]), index=None,
+            accept_new_options=True, placeholder="Pick one, or type a new one and press Enter")
+        tags = []
+        if t != "inflow":
+            tags = st.multiselect("Tags", merge_options(DEFAULT_TAGS, db.all_tags()), accept_new_options=True,
+                                  placeholder="Optional. Pick, or type a new tag and press Enter")
         note = st.text_input("Note")
         if st.form_submit_button("Save", icon=":material/check:"):
-            cat = new if pick == "(new)" else pick
-            if not t or not cat.strip() or amt <= 0:
-                st.error("Type, category and a positive amount are required.")
+            if not cat or not cat.strip() or amt <= 0:
+                st.error("A category/source and a positive amount are required.")
             else:
-                db.add_entry(d, t, cat, amt, note, tag)
-                st.toast(f"Saved {t}: {cat} {inr(amt)}", icon=":material/check_circle:")
+                db.add_entry(d, t, cat, amt, note, tags)
+                st.toast(f"Saved {TYPE_LABEL[t].lower()}: {db.fmt(cat)} {inr(amt)}", icon=":material/check_circle:")
                 st.rerun()
     st.subheader("Recent entries")
     st.caption("Tick rows and delete — mistakes are one click away from gone (and recoverable from Backup).")
@@ -254,11 +286,12 @@ elif page == "Fixed items":
     with st.form("fx", clear_on_submit=True):
         c = st.columns(5, vertical_alignment="bottom")
         n = c[0].text_input("Name")
-        cat = c[1].text_input("Category")
+        cat = c[1].selectbox("Category", categories_for(["fixed"]), index=None, accept_new_options=True,
+                             placeholder="Pick or type")
         a = c[2].number_input("Amount (₹)", min_value=0.0, step=100.0)
         f = c[3].selectbox("Frequency", list(db.FREQUENCIES), index=2)
         nd = c[4].date_input("Next due", today)
-        if st.form_submit_button("Add", icon=":material/add:") and n.strip() and cat.strip() and a > 0:
+        if st.form_submit_button("Add", icon=":material/add:") and n.strip() and cat and cat.strip() and a > 0:
             db.add_fixed_item(n, cat, a, f, nd)
             st.rerun()
     if not fixed_items.empty:
@@ -286,9 +319,10 @@ elif page == "Budgets":
     st.title("Budgets")
     with st.form("bg", clear_on_submit=True):
         c = st.columns(3, vertical_alignment="bottom")
-        cat = c[0].text_input("Category")
+        cat = c[0].selectbox("Category", categories_for(["fixed", "variable"]), index=None,
+                             accept_new_options=True, placeholder="Pick or type")
         a = c[1].number_input("Monthly budget (₹)", min_value=0.0, step=500.0)
-        if c[2].form_submit_button("Set", icon=":material/check:") and cat.strip():
+        if c[2].form_submit_button("Set", icon=":material/check:") and cat and cat.strip():
             db.set_budget(cat, a)
             st.rerun()
     for _, b in an.budget_status(entries, budgets).iterrows():
@@ -312,10 +346,10 @@ elif page == "Insights":
     fc = an.forecast(entries, fixed_items)
     if not fc.empty:
         fig = go.Figure()
-        fig.add_bar(x=fc.index, y=fc["inflow"], name="Inflow", marker_color=C_IN)
+        fig.add_bar(x=fc.index, y=fc["inflow"], name="Income", marker_color=C_IN)
         fig.add_bar(x=fc.index, y=fc["outflow"], name="Outflow", marker_color=C_OUT)
         fig.update_layout(barmode="group", bargap=0.35)
-        show(style(fig, "3-month forecast"), "Projected inflow and outflow for the next three months")
+        show(style(fig, "3-month forecast"), "Projected income and outflow for the next three months")
         avg_net = fc["net"].mean()
         st.write(f"Projected average net: **{inr(avg_net)}/month** "
                  "(trailing 3-month averages + scheduled fixed items).")
@@ -334,10 +368,19 @@ elif page == "Insights":
         if m is not None and bal > 0:
             st.metric("Months of expenses covered", f"{m:.1f}")
             joke(cap.fund(m, seed))
-    tagged = entries[(entries["type"] == "variable") & (entries["tag"] != "")]
+    inc = entries[entries["type"] == "inflow"].groupby("category")["amount"].sum().sort_values()
+    if not inc.empty:
+        fig = go.Figure(go.Bar(x=inc.values, y=inc.index, orientation="h", marker_color=C_IN))
+        fig.update_layout(hovermode="closest")
+        show(style(fig, "Income by source (all time)"), "Horizontal bars of income per source")
+        st.write(f"Biggest source: **{inc.index[-1]}** ({inr(inc.iloc[-1])}, "
+                 f"{inc.iloc[-1] / inc.sum() * 100:.0f}% of income).")
+    tagged = entries[(entries["type"] != "inflow") & (entries["tag"] != "")].assign(
+        tag=lambda d: d["tag"].map(db.split_tags)).explode("tag")
     if not tagged.empty:
-        st.markdown("**Variable spend by tag**")
-        st.dataframe(tagged.groupby("tag")["amount"].agg(entries="count", total="sum"), width="stretch")
+        st.markdown("**Spend by tag**")
+        st.dataframe(tagged.groupby("tag")["amount"].agg(entries="count", total="sum")
+                     .sort_values("total", ascending=False), width="stretch")
         joke(cap.pick("tags", seed))
 
 # =============================================================== History
@@ -347,8 +390,8 @@ elif page == "History":
         st.info("No entries.")
     else:
         f = st.columns([2, 2, 3], vertical_alignment="bottom")
-        ft = f[0].segmented_control("Type", ["inflow", "fixed", "variable"], selection_mode="multi")
-        cats = f[1].multiselect("Category", sorted(entries["category"].unique()))
+        ft = f[0].segmented_control("Type", list(TYPE_LABEL), format_func=TYPE_LABEL.get, selection_mode="multi")
+        cats = f[1].multiselect("Category / source", sorted(entries["category"].unique()))
         q = f[2].text_input("Search note")
         v = entries
         if ft:

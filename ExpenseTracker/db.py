@@ -73,19 +73,95 @@ def connect(path: str | None = None):
         conn.close()
 
 
+# ---------- letter case ----------
+ACRONYMS = {"EMI", "SIP", "UPI", "ATM", "GST", "PPF", "EPF", "PF", "NPS", "FD", "RD", "ETF", "HRA", "LIC",
+            "TV", "AC", "ID", "SMS", "OTT", "IT"}
+
+
+def fmt(text) -> str:
+    """Letter Case for labels: 'home LOAN  emi' -> 'Home Loan EMI'. Known finance acronyms stay upper-case."""
+    out = []
+    for w in " ".join(str(text or "").split()).split(" "):
+        out.append(w.upper() if w.upper() in ACRONYMS else w[:1].upper() + w[1:].lower())
+    return " ".join(out)
+
+
+def split_tags(tags) -> list[str]:
+    """'Trip, Medical' / ['Trip','Medical'] -> ['Trip','Medical'] (no blanks, no case-duplicates)."""
+    parts = tags.split(",") if isinstance(tags, str) else list(tags or [])
+    seen, out = set(), []
+    for t in parts:
+        t = fmt(t)
+        if t and t.casefold() not in seen:
+            seen.add(t.casefold())
+            out.append(t)
+    return out
+
+
+def _canonical(value: str, existing) -> str:
+    """Format `value`, but reuse the spelling already stored if it matches ignoring case (e.g. keep 'EMI')."""
+    v = fmt(value)
+    for e in existing:
+        if e and e.casefold() == v.casefold():
+            return e
+    return v
+
+
+def _distinct(column: str, table="entries", path=None) -> list[str]:
+    with connect(path) as c:
+        return [r[0] for r in c.execute(f"SELECT DISTINCT {column} FROM {table}") if r[0]]
+
+
+def all_tags(path=None) -> list[str]:
+    seen: dict[str, str] = {}
+    for row in _distinct("tag", path=path):
+        for t in split_tags(row):
+            seen.setdefault(t.casefold(), t)
+    return sorted(seen.values())
+
+
+def normalize_existing(path=None) -> None:
+    """Idempotent clean-up: Letter Case + merge case-variants for categories, tags and fixed-item names."""
+    with connect(path) as c:
+        canon: dict[str, str] = {}
+
+        def cn(v):
+            f = fmt(v)
+            return canon.setdefault(f.casefold(), f) if f else f
+
+        for r in c.execute("SELECT id, category, tag FROM entries").fetchall():
+            cat, tag = cn(r["category"]), ", ".join(cn(t) for t in split_tags(r["tag"]))
+            if (cat, tag) != (r["category"], r["tag"]):
+                c.execute("UPDATE entries SET category=?, tag=? WHERE id=?", (cat, tag, r["id"]))
+        for r in c.execute("SELECT id, name, category FROM fixed_items").fetchall():
+            name, cat = fmt(r["name"]), cn(r["category"])
+            if (name, cat) != (r["name"], r["category"]):
+                c.execute("UPDATE fixed_items SET name=?, category=? WHERE id=?", (name, cat, r["id"]))
+        for r in c.execute("SELECT category FROM budgets").fetchall():
+            cat = cn(r["category"])
+            if cat != r["category"] and not c.execute("SELECT 1 FROM budgets WHERE category=?", (cat,)).fetchone():
+                c.execute("UPDATE budgets SET category=? WHERE category=?", (cat, r["category"]))
+
+
 def init_db(path: str | None = None) -> None:
     with connect(path) as c:
         c.executescript(SCHEMA)
+    normalize_existing(path)
 
 
 # ---------- entries ----------
 def add_entry(date_, type_, category, amount, note="", tag="", fixed_item_id=None, path=None):
     if type_ not in ENTRY_TYPES:
         raise ValueError(f"type must be one of {ENTRY_TYPES}")
+    category = _canonical(category, _distinct("category", path=path))
+    if not category:
+        raise ValueError("Category required")
+    known = {t.casefold(): t for t in all_tags(path)}
+    tag = ", ".join(known.get(t.casefold(), t) for t in split_tags(tag))
     with connect(path) as c:
         c.execute(
             "INSERT INTO entries(date,type,category,amount,note,tag,fixed_item_id) VALUES (?,?,?,?,?,?,?)",
-            (str(date_), type_, category.strip(), float(amount), note, tag, fixed_item_id),
+            (str(date_), type_, category, float(amount), note.strip(), tag, fixed_item_id),
         )
 
 
@@ -108,7 +184,9 @@ def add_fixed_item(name, category, amount, frequency, next_due, path=None):
     with connect(path) as c:
         c.execute(
             "INSERT INTO fixed_items(name,category,amount,frequency,next_due) VALUES (?,?,?,?,?)",
-            (name.strip(), category.strip(), float(amount), frequency, str(next_due)),
+            (fmt(name), _canonical(category, _distinct("category", path=path)
+                                   + _distinct("category", "fixed_items", path)),
+             float(amount), frequency, str(next_due)),
         )
 
 
@@ -165,7 +243,8 @@ def set_budget(category, amount, path=None):
         c.execute(
             "INSERT INTO budgets(category,amount) VALUES (?,?) "
             "ON CONFLICT(category) DO UPDATE SET amount=excluded.amount",
-            (category.strip(), float(amount)),
+            (_canonical(category, _distinct("category", path=path) + _distinct("category", "budgets", path)),
+             float(amount)),
         )
 
 

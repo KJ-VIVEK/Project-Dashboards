@@ -95,10 +95,10 @@ def detect_alerts(entries: pd.DataFrame, today: date | None = None, window: int 
             # skip the early-month false alarm before the first inflow is logged
             if r["outflow"] > r["inflow"] and r["outflow"] > 0 and (r["inflow"] > 0 or today.day >= 15):
                 alerts.append(Alert("danger", "Negative cash flow",
-                                    f"Outflow ₹{r['outflow']:,.0f} exceeds inflow ₹{r['inflow']:,.0f} this month."))
+                                    f"Outflow ₹{r['outflow']:,.0f} exceeds income ₹{r['inflow']:,.0f} this month."))
             if r["inflow"] > 0 and r["fixed_ratio"] > 0.5:
                 alerts.append(Alert("warning", "Heavy fixed commitments",
-                                    f"Fixed costs are {r['fixed_ratio'] * 100:.0f}% of inflow (above 50%)."))
+                                    f"Fixed costs are {r['fixed_ratio'] * 100:.0f}% of income (above 50%)."))
         hist = ms[ms.index < cur].tail(window)
         if len(hist) >= min_history and not full_cur.empty:
             share = lambda d: d["variable"].sum() / d["outflow"].sum() if d["outflow"].sum() else 0

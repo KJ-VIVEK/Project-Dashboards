@@ -119,3 +119,26 @@ def test_active_user_is_isolated_per_thread(tmp_path):
     [t.start() for t in ts]; [t.join() for t in ts]
     assert not errors, errors
     assert len(db.get_entries(pa)) == 20 and len(db.get_entries(pb)) == 20
+
+
+def test_letter_case_and_tags(path):
+    assert db.fmt("  home LOAN   emi ") == "Home Loan EMI"
+    assert db.fmt("EMI") == "EMI" and db.fmt("sip") == "SIP" and db.fmt("GYM") == "Gym"
+    assert db.split_tags("trip, TRIP ,medical,, ") == ["Trip", "Medical"]
+    db.add_entry("2026-01-01", "fixed", "EMI", 100, path=path)
+    db.add_entry("2026-01-02", "variable", "dining out", 50, tag=["impromptu", "Late Night"], path=path)
+    db.add_entry("2026-01-03", "variable", "DINING OUT", 60, tag="IMPROMPTU", path=path)  # merges, not a new category
+    db.add_entry("2026-01-04", "fixed", "emi", 100, path=path)  # reuses the stored 'EMI'
+    df = db.get_entries(path)
+    assert set(df["category"]) == {"EMI", "Dining Out"}
+    assert set(df["tag"]) == {"", "Impromptu, Late Night", "Impromptu"}
+    assert db.all_tags(path) == ["Impromptu", "Late Night"]
+
+
+def test_normalize_existing_merges_case_variants(path):
+    with db.connect(path) as c:
+        c.execute("INSERT INTO entries(date,type,category,amount,tag) VALUES ('2026-01-01','variable','dining',1,'habit')")
+        c.execute("INSERT INTO entries(date,type,category,amount,tag) VALUES ('2026-01-02','variable','DINING',1,'Habit, trip')")
+    db.init_db(path)
+    df = db.get_entries(path)
+    assert set(df["category"]) == {"Dining"} and set(df["tag"]) == {"Habit", "Habit, Trip"}
