@@ -1,0 +1,19 @@
+# ---- personal data: never commit (applies to every dashboard) ----
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.csv
+data/
+backups/
+
+# ---- environments & caches ----
+.venv/
+__pycache__/
+.pytest_cache/
+
+# ---- local tooling (personal, not project code) ----
+.claude/
+.agents/
