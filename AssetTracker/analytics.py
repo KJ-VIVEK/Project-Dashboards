@@ -121,8 +121,10 @@ def build_positions(securities: pd.DataFrame, trades: pd.DataFrame, dividends: p
 
 
 # ---------------------------------------------------------------- income
-def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.DataFrame, include_auto=True) -> pd.DataFrame:
-    """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab."""
+def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.DataFrame, include_auto=True,
+                 premiums: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
+    (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
     amount = amount.where(income["source"] != db.TAX_SOURCE, -amount.abs())  # taxes reduce the total
     parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
@@ -132,6 +134,9 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
                                    "amount": num(dividends["amount"]), "origin": "Stocks (dividend)"}))
         parts.append(pd.DataFrame({"date": realised["date"], "source": "PL Booking", "amount": realised["pnl"],
                                    "origin": "Stocks (sale)"}))
+    if premiums is not None and len(premiums):     # insurance premiums paid reduce income, like taxes
+        parts.append(pd.DataFrame({"date": premiums["date"], "source": db.PREMIUM_SOURCE,
+                                   "amount": -num(premiums["amount"]).abs(), "origin": "Insurance"}))
     df = pd.concat([p for p in parts if len(p)], ignore_index=True) if any(len(p) for p in parts) else \
         pd.DataFrame(columns=["date", "source", "amount", "origin"])
     dt = pd.to_datetime(df["date"], errors="coerce")
@@ -270,6 +275,27 @@ def insurance_monthly(ins: pd.DataFrame, revisions: pd.DataFrame | None, year: i
     return out
 
 
+def insurance_payments(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, today=None) -> pd.DataFrame:
+    """Every month's premium paid, from each policy's start date up to and including this month: one row per policy per
+    month (date = first of the month, amount spread as premium x payments per year / 12). Policies with no start date
+    have no known history and give no rows."""
+    from datetime import date as _date
+    today = today or _date.today()
+    now, rows = _ym(today), []
+    by_policy = _revisions_by_policy(revisions)
+    for _, row in ins.iterrows():
+        start = _date_or_none(row.get("start_date")) if "start_date" in row else None
+        if start is None:
+            continue
+        pid = int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1
+        sch = _policy_schedule(row, by_policy.get(pid, []))
+        for ym in range(_ym(start), now + 1):
+            if sch["in_force"](ym):
+                rows.append({"date": _date(ym // 12, ym % 12 + 1, 1), "policy": row.get("name"),
+                             "amount": sch["premium_at"](ym) * sch["mult"] / 12})
+    return pd.DataFrame(rows, columns=["date", "policy", "amount"])
+
+
 def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, year: int | None = None,
                     today=None) -> pd.DataFrame:
     """Policies with their premium worked out per month, per year and over time.
@@ -296,17 +322,22 @@ def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, ye
     now, rows = _ym(today), []
     for idx, row in i.iterrows():
         sch = _policy_schedule(row, by_policy.get(int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1, []))
-        not_started = sch["start"] is not None and _ym(sch["start"]) > now
-        running = sch["in_force"](now) or (bool(row["active"]) and not_started)
+        if not bool(row["active"]) or (sch["end"] and now > _ym(sch["end"])):
+            status = "Inactive"
+        elif sch["start"] is not None and _ym(sch["start"]) > now:
+            status = "Not started"
+        else:
+            status = "Active"
         prem_now = sch["premium_at"](now)
-        per_year = prem_now * sch["mult"] if running else 0.0
+        per_year = prem_now * sch["mult"] if status != "Inactive" else 0.0
         if sch["start"] is not None:
             months = [m for m in range(_ym(sch["start"]), now + 1) if sch["in_force"](m)]
             paid, n = sum(sch["premium_at"](m) * sch["mult"] / 12 for m in months), len(months)
         else:
             paid, n = float("nan"), float("nan")
-        rows.append((prem_now, per_year, per_year / 12, paid, n))
-    i["premium_now"], i["per_year"], i["per_month"], i["paid_to_date"], i["months_to_date"] = zip(*rows) if rows else ([],) * 5
+        rows.append((prem_now, per_year, per_year / 12, paid, n, status))
+    (i["premium_now"], i["per_year"], i["per_month"], i["paid_to_date"], i["months_to_date"],
+     i["status"]) = zip(*rows) if rows else ([],) * 6
     return i
 
 
