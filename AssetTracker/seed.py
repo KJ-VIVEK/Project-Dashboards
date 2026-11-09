@@ -93,11 +93,12 @@ def main(out, reset):
     ins("loans", {"name": "Credit card dues", "lender": "Axis", "category": "Worst", "outstanding": 30000,
                   "interest_rate": 42.0})
 
-    for metal, form, desc, g, rate, mk, gst in [("Gold", "Coin", "10 g coin", 10, 6200, 300, 1900),
-                                                ("Gold", "Coin", "5 g coin", 5, 6900, 200, 1070),
+    for metal, form, desc, g, rate, mk, gst in [("Gold", "Coin", "10 g coin (24K)", 10, 6200, 300, 1900),
+                                                ("Gold", "Jewellery", "5 g chain (22K)", 5, 6900, 200, 1070),
                                                 ("Silver", "Bar", "100 g bar", 100, 85, 150, 280)]:
         ins("metals", {"metal": metal, "form": form, "description": desc, "date": today - timedelta(days=400),
-                       "grams": g, "rate_per_g": rate, "making_charges": mk, "gst": gst, "purity": "999"})
+                       "grams": g, "rate_per_g": rate, "making_charges": mk, "gst": gst,
+                       "purity": "22K" if "22K" in desc else ("999" if metal == "Silver" else "24K")})
     db.meta_set("price_gold", 7600, out)
     db.meta_set("price_silver", 98, out)
     db.meta_set("fx_usdinr", 88.0, out)

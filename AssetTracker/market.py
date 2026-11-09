@@ -147,8 +147,8 @@ def refresh(path: str | None = None, force: bool = False, max_age: int = 60) -> 
 
     if db.meta_get("metal_auto", "1", path) == "1" and fx:
         for metal, per_g in fetch_metals_inr_per_g(fx).items():
-            premium = float(db.meta_get(f"premium_{metal.lower()}", 0, path) or 0)
-            new = round(per_g * (1 + premium / 100), 2)
+            db.meta_set(f"spot_{metal.lower()}", round(per_g, 2), path)  # international price, before premium
+            new = round(per_g * (1 + db.metal_premium(metal, path) / 100), 2)
             if abs(new - float(db.meta_get(f"price_{metal.lower()}", 0, path) or 0)) > 1e-9:
                 result["changed"] += 1
             db.meta_set(f"price_{metal.lower()}", new, path)

@@ -730,35 +730,65 @@ with tabs[5]:
                 ("security_id", "date", "amount"), "dividends", to_db=to_db_d)
 
 # ================================================================== 7. GOLD & SILVER
+FORMS = ["Coin", "Bar", "Jewellery", "Other"]
 with tabs[6]:
-    st.caption("Physical gold and silver (coins, bars, jewellery), valued per gram.")
-    auto_m = db.meta_get("metal_auto", "1") == "1"
-    p0, p1, p2 = st.columns([1.4, 1, 1], vertical_alignment="bottom")
-    live_m = p0.checkbox("Keep prices live", value=auto_m, key="metal_live",
-                         help="International spot price × USD/INR ÷ 31.1035 g/oz, plus your local premium.")
-    prem_g = p1.number_input("Gold local premium %", value=float(db.meta_get("premium_gold", 0) or 0), step=0.5,
-                             format="%.2f", key="prem_g", help="Import duty, GST and dealer margin: Indian retail "
-                             "prices run above the international price. Adjust until it matches your jeweller.")
-    prem_s = p2.number_input("Silver local premium %", value=float(db.meta_get("premium_silver", 0) or 0), step=0.5,
-                             format="%.2f", key="prem_s")
-    q1, q2, q3 = st.columns([1, 1, 1], vertical_alignment="bottom")
-    gp = q1.number_input("Gold price (₹ / g)", min_value=0.0, value=prices["Gold"], format="%.2f",
-                         key=f"gp_{prices['Gold']}", disabled=live_m)
-    sp = q2.number_input("Silver price (₹ / g)", min_value=0.0, value=prices["Silver"], format="%.2f",
-                         key=f"sp_{prices['Silver']}", disabled=live_m)
-    if q3.button("Save price settings", type="primary"):
+    st.caption("Physical gold and silver (coins, bars, jewellery). Prices below are per gram of pure metal "
+               "(24K gold, 999 silver); each purchase is valued at its own karat/purity.")
+    live_m = st.checkbox("Keep prices live", value=db.meta_get("metal_auto", "1") == "1", key="metal_live",
+                         help="International spot price × USD/INR ÷ 31.1035 g/oz, then your local premium on top.")
+    manual_price, premium_in, local_in = {}, {}, {}
+    cols = st.columns(2)
+    for col, metal in zip(cols, db.METALS):
+        spot = float(db.meta_get(f"spot_{metal.lower()}", 0) or 0)
+        unit = "24K" if metal == "Gold" else "999"
+        with col.container(border=True):
+            st.markdown(f"##### {metal} · {unit} · per gram")
+            if live_m:
+                c = st.columns(3)
+                c[0].metric("International", an.inr(spot) if spot else "–",
+                            help="Spot price converted to ₹/g: no import duty, GST or dealer margin")
+                c[1].metric("Price used", an.inr(prices[metal]) if prices[metal] else "–",
+                            help="International price + local premium")
+                premium_in[metal] = c[2].number_input(
+                    "Local premium %", value=db.metal_premium(metal), step=0.5, format="%.2f",
+                    key=f"prem_{metal}_{db.metal_premium(metal)}",
+                    help="Starts at India's 6% import duty. Indian shop rates also include dealer margin: "
+                         "calibrate below.")
+                local_in[metal] = st.number_input(
+                    f"Calibrate: today's {unit} {metal.lower()} rate from your jeweller (₹/g)", min_value=0.0,
+                    value=0.0, format="%.2f", key=f"cal_{metal}_{version('metal_cal')}",
+                    help="Optional. Type the per-gram rate you see locally (before GST) and the premium is worked "
+                         "out for you. Leave 0 to use the premium above.")
+            else:
+                manual_price[metal] = st.number_input(
+                    f"{metal} price (₹ / g, {unit})", min_value=0.0, value=prices[metal], format="%.2f",
+                    key=f"man_{metal}_{prices[metal]}")
+    if st.button("Save price settings", type="primary"):
         db.meta_set("metal_auto", "1" if live_m else "0")
-        db.meta_set("premium_gold", prem_g)
-        db.meta_set("premium_silver", prem_s)
-        if not live_m:
-            db.meta_set("price_gold", gp)
-            db.meta_set("price_silver", sp)
-        else:
+        problems = []
+        for metal in db.METALS:
+            low = metal.lower()
+            if live_m:
+                spot = float(db.meta_get(f"spot_{low}", 0) or 0)
+                prem = premium_in[metal]
+                if local_in[metal] > 0:
+                    if spot > 0:
+                        prem = (local_in[metal] / spot - 1) * 100
+                    else:
+                        problems.append(f"No live {metal.lower()} price yet to calibrate against; try Refresh now.")
+                db.meta_set(f"premium_{low}", round(prem, 2))
+                if spot > 0:
+                    db.meta_set(f"price_{low}", round(spot * (1 + prem / 100), 2))
+            else:
+                db.meta_set(f"price_{low}", manual_price[metal])
+        if live_m and not all(float(db.meta_get(f"spot_{m.lower()}", 0) or 0) for m in db.METALS):
             market.refresh(force=True)
-        flash("Price settings saved.")
+        bump("metal_cal")
+        flash(" ".join(problems) or "Price settings saved.")
         st.rerun()
     if live_m and not (prices["Gold"] or prices["Silver"]):
         st.info("No live price yet. Press Refresh now in the sidebar, or turn off 'Keep prices live' to type them.")
+
     for metal in db.METALS:
         m = metals_f[metals_f["metal"] == metal]
         c = st.columns(5)
@@ -769,19 +799,24 @@ with tabs[6]:
             help="Making charges + GST + other charges")
         kpi(c[3], "Current value", m["value"].sum())
         kpi(c[4], "Gain / loss", m["pnl"].sum())
+
+    st.markdown("#### Add a purchase")
+    metal = st.radio("Metal", db.METALS, horizontal=True, key="metal_pick")
     with st.form("add_metal", clear_on_submit=True):
-        c = st.columns([1, 1, 1.6, 1.2], vertical_alignment="bottom")
-        metal = c[0].selectbox("Metal", db.METALS)
-        form = c[1].selectbox("Form", ["Coin", "Bar", "Jewellery", "Other"])
-        desc = c[2].text_input("Description", placeholder="e.g. 10 g Tanishq coin")
-        dt_ = c[3].date_input("Bought on", date.today())
-        c = st.columns(6, vertical_alignment="bottom")
+        c = st.columns(3)
+        form = c[0].selectbox("Form", FORMS)
+        pur = c[1].selectbox("Karat" if metal == "Gold" else "Purity (fineness)", db.PURITIES[metal],
+                             index=db.PURITIES[metal].index(db.DEFAULT_PURITY[metal]),
+                             help="Gold in karats (22K = 91.6% pure); silver as fineness (925 = sterling).")
+        dt_ = c[2].date_input("Bought on", date.today())
+        desc = st.text_input("Description", placeholder="e.g. 10 g Tanishq coin")
+        c = st.columns(5)
         gr = c[0].number_input("Grams", min_value=0.0, format="%.3f")
-        rate = c[1].number_input("Rate (₹/g)", min_value=0.0, format="%.2f")
+        rate = c[1].number_input("Rate paid (₹/g)", min_value=0.0, format="%.2f",
+                                 help="Per-gram rate you were charged for this karat/purity, before making charges and GST")
         mk = c[2].number_input("Making charges (₹)", min_value=0.0, format="%.2f")
         gst = c[3].number_input("GST (₹)", min_value=0.0, format="%.2f")
         oth = c[4].number_input("Other charges (₹)", min_value=0.0, format="%.2f")
-        pur = c[5].text_input("Purity", placeholder="24K / 999")
         if st.form_submit_button("Add purchase", type="primary"):
             if gr > 0 and rate > 0:
                 db.insert("metals", {"metal": metal, "form": form, "description": desc, "date": dt_, "grams": gr,
@@ -791,29 +826,37 @@ with tabs[6]:
                 st.rerun()
             else:
                 st.error("Grams and rate must be above zero.")
-    edit_table("metals", metals, metals, {
-        "metal": st.column_config.SelectboxColumn("Metal", options=db.METALS, required=True),
-        "form": st.column_config.SelectboxColumn("Form", options=["Coin", "Bar", "Jewellery", "Other"]),
-        "description": "Description", "date": st.column_config.DateColumn("Bought on"),
-        "grams": st.column_config.NumberColumn("Grams", min_value=0, format="%.3f", required=True),
-        "rate_per_g": money_cfg("Rate (₹/g)", required=True), "making_charges": money_cfg("Making (₹)"),
-        "gst": money_cfg("GST (₹)"), "other_charges": money_cfg("Other (₹)"), "purity": "Purity", "note": "Note"},
-        ("metal", "grams", "rate_per_g"), "metals")
+
     if not metals_f.empty:
-        st.markdown("**Per purchase**")
-        t = metals_f[["metal", "description", "date", "grams", "metal_cost", "charges", "charges_pct", "invested",
-                      "current_price", "value", "pnl", "pnl_pct"]]
+        st.markdown("#### Per purchase")
+        t = metals_f[["metal", "purity", "description", "date", "grams", "metal_cost", "charges", "charges_pct",
+                      "invested", "current_price", "value", "pnl", "pnl_pct"]]
         st.dataframe(t, hide_index=True, width="stretch", column_config={
-            "metal": "Metal", "description": "Description", "date": st.column_config.DateColumn("Bought on"),
+            "metal": "Metal", "purity": "Karat / purity", "description": "Description",
+            "date": st.column_config.DateColumn("Bought on"),
             "grams": st.column_config.NumberColumn("Grams", format="%.3f"),
             "metal_cost": st.column_config.NumberColumn("Metal cost", format="₹%.0f"),
             "charges": st.column_config.NumberColumn("Charges + GST", format="₹%.0f"),
             "charges_pct": st.column_config.NumberColumn("Charges %", format="%.1f%%"),
             "invested": st.column_config.NumberColumn("Invested", format="₹%.0f"),
-            "current_price": st.column_config.NumberColumn("Price now /g", format="₹%.2f"),
+            "current_price": st.column_config.NumberColumn("Price now /g", format="₹%.2f",
+                                                           help="For this purchase's karat/purity"),
             "value": st.column_config.NumberColumn("Value now", format="₹%.0f"),
             "pnl": st.column_config.NumberColumn("Gain / loss", format="₹%.0f"),
             "pnl_pct": st.column_config.NumberColumn("Gain %", format="%.1f%%")})
+
+    with st.expander("Edit or delete purchases", icon=":material/edit:"):
+        purity_opts = db.PURITIES["Gold"] + db.PURITIES["Silver"]
+        purity_opts += sorted({p for p in metals["purity"].dropna() if p not in purity_opts})
+        edit_table("metals", metals, metals, {
+            "metal": st.column_config.SelectboxColumn("Metal", options=db.METALS, required=True),
+            "form": st.column_config.SelectboxColumn("Form", options=FORMS),
+            "purity": st.column_config.SelectboxColumn("Karat / purity", options=purity_opts),
+            "description": "Description", "date": st.column_config.DateColumn("Bought on"),
+            "grams": st.column_config.NumberColumn("Grams", min_value=0, format="%.3f", required=True),
+            "rate_per_g": money_cfg("Rate paid (₹/g)", required=True), "making_charges": money_cfg("Making (₹)"),
+            "gst": money_cfg("GST (₹)"), "other_charges": money_cfg("Other (₹)"), "note": "Note"},
+            ("metal", "grams", "rate_per_g"), "metals")
 
 # ================================================================== 8. REAL ESTATE
 RE_KINDS = ["Flat", "House", "Plot", "Land", "Commercial", "Other"]
