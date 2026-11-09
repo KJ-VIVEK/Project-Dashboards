@@ -94,12 +94,13 @@ def main(out, reset):
                             "sum_assured": 180000, "premium": 0, "frequency": "Yearly", "active": True})
     od1 = today - timedelta(days=500)
     od2 = today - timedelta(days=135)
-    for label, prem, f_, s_, e_ in [
-            ("Own Damage (OD)", 3400, "One-time (whole period)", od1, od1 + timedelta(days=364)),
-            ("Own Damage (OD)", 3150, "One-time (whole period)", od2, od2 + timedelta(days=364)),
-            ("Third Party (TP)", 5286, "One-time (whole period)", od1, date(od1.year + 5, od1.month, od1.day) - timedelta(days=1))]:
+    for label, prem, f_, s_, e_, no in [
+            ("Own Damage (OD)", 3400, "One-time (whole period)", od1, od1 + timedelta(days=364), "VH-77/1"),
+            ("Own Damage (OD)", 3150, "One-time (whole period)", od2, od2 + timedelta(days=364), "VH-77/2"),
+            ("Third Party (TP)", 5286, "One-time (whole period)", od1,
+             date(od1.year + 5, od1.month, od1.day) - timedelta(days=1), "VH-77/1")]:
         ins("insurance", {"name": f"Bike policy · {label}", "type": "Vehicle", "provider": "ICICI Lombard",
-                           "policy_no": "VH-77", "premium": prem, "frequency": f_, "start_date": s_, "end_date": e_,
+                           "policy_no": no, "premium": prem, "frequency": f_, "start_date": s_, "end_date": e_,
                            "active": True, "parent_id": veh, "component": label})
 
     ins("loans", {"name": "Home loan", "lender": "SBI", "category": "Good", "principal": 4500000,
