@@ -398,8 +398,8 @@ with tabs[1]:
                 flash("Entry added.")
                 st.rerun()
 
-    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True),
-                          prem_paid if st.session_state.get("sum_prem", True) else None)
+    # insurance premiums are their own section (Insurance tab); only the Summary subtracts them
+    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True))
     view = st.radio("View", ["Per month", "Per year"], horizontal=True, key="src_view")
     if view == "Per month":
         ys = sorted(inc["year"].unique(), reverse=True) or [date.today().year]
