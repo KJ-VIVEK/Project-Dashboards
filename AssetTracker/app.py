@@ -26,10 +26,22 @@ IDEAL, REAL = "#898781", "#2a78d6"
 DATE_MIN, DATE_MAX = date(1995, 1, 1), date(2100, 12, 31)
 
 
+PARTIAL = {}   # labels of date pickers left half-filled in this run
+
+
+def partial_dates(*labels):
+    """True (after showing an error) if any of these date pickers is only partly filled, so nothing is silently dropped."""
+    bad = [x for x in labels if PARTIAL.get(x)]
+    if bad:
+        st.error("**Nothing was added.** Finish the date (day, month and year) or set all three back to -: " + ", ".join(bad) + ".")
+    return bool(bad)
+
+
 def dinput(container, label, value=None, key=None, help=None):
     """Date picker made of three scrolling lists (day, month, year 1995-2100).  Returns a date or None."""
     import calendar
     import inspect
+    PARTIAL.pop(label, None)
     key = key or f"dt{inspect.currentframe().f_back.f_lineno}_{label}"
     container.markdown(f"<div style='font-size:14px;margin-bottom:-6px'>{label}</div>", unsafe_allow_html=True)
     if help:
@@ -47,6 +59,7 @@ def dinput(container, label, value=None, key=None, help=None):
     if blank in (day, mon, yr):
         if not (day == mon == yr == blank):
             container.caption("Pick day, month and year, or leave all three as -.")
+            PARTIAL[label] = True
         return None
     month = MONTHS.index(mon) + 1
     last = calendar.monthrange(yr, month)[1]
@@ -440,7 +453,7 @@ with tabs[2]:
         rate = c2[0].number_input("Interest % (optional)", min_value=0.0, step=0.1, format="%.2f")
         mat = dinput(c2[1], "Maturity / target date", value=None)
         tgt = c2[2].number_input("Goal target ₹ (goals)", min_value=0.0, step=1000.0, format="%.2f")
-        if c2[4].form_submit_button("Add", width="stretch", type="primary"):
+        if c2[4].form_submit_button("Add", width="stretch", type="primary") and not partial_dates("Maturity / target date"):
             if name.strip():
                 db.insert("savings", {"kind": kind, "name": name, "amount": amt, "purpose": purpose,
                                       "interest_rate": rate or None, "maturity_date": mat, "target": tgt or None})
@@ -529,7 +542,7 @@ with tabs[3]:
             p_start = dinput(c[0], "Start date", value=None)
             p_end = dinput(c[1], "End date", value=None, help="Leave empty while the policy is running.")
             st.write("")
-            if st.form_submit_button("Add policy", type="primary"):
+            if st.form_submit_button("Add policy", type="primary") and not partial_dates("Next due", "Start date", "End date"):
                 if not name.strip() or prem <= 0:
                     st.error("A name and a premium above zero are needed.")
                 elif p_start and p_end and p_end < p_start:
@@ -557,7 +570,7 @@ with tabs[3]:
                 new_prem = c[1].number_input("New premium each time (₹)", min_value=0.0, step=500.0, format="%.2f")
                 eff = dinput(c[2], "Effective from", value=None)
                 why = c[3].text_input("Reason", placeholder="e.g. GST change")
-                if st.form_submit_button("Record premium change", type="primary"):
+                if st.form_submit_button("Record premium change", type="primary") and not partial_dates("Effective from"):
                     target_pol = ins_y[ins_y["id"] == pid].iloc[0]
                     if new_prem <= 0 or eff is None:
                         st.error("A new premium above zero and an effective date are needed.")
@@ -694,7 +707,7 @@ with tabs[4]:
             details = st.text_area("Details others should know", placeholder="Co-borrower, collateral, prepayment rules, "
                                    "where the papers are…", height=80)
             st.write("")
-            if st.form_submit_button("Add loan", type="primary"):
+            if st.form_submit_button("Add loan", type="primary") and not partial_dates("Started", "Planned end", "Closed on"):
                 closed = status == "Closed"
                 if not name.strip():
                     st.error("A loan name is needed.")
@@ -1238,7 +1251,7 @@ with tabs[7]:
             ry = c[0].checkbox("Rent yielding")
             rent = c[1].number_input("Rent per month (₹)", min_value=0.0, step=1000.0, format="%.0f")
             st.write("")
-            if st.form_submit_button("Add property", type="primary"):
+            if st.form_submit_button("Add property", type="primary") and not partial_dates("Purchased on"):
                 if nm.strip() and cost > 0:
                     db.insert("real_estate", {"name": nm, "kind": kind, "location": loc, "purchase_date": pd_,
                                               "cost": cost, "area_sqft": area or None, "registration": reg or None,
