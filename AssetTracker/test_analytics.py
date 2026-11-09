@@ -440,3 +440,9 @@ def test_paid_to_lender_minus_loan_is_interest_plus_charges():
     r = an.loans_frame(pd.DataFrame([KTM])).iloc[0]
     assert r["lender_paid"] == 313222 and r["lender_extra"] == 40222
     assert r["lender_extra"] == r["interest_paid"] + r["other_charges"]
+
+
+def test_blank_text_fields_do_not_leak_nan():
+    k = dict(KTM, lender=None, link=float("nan"), details=None)
+    md = an.loans_markdown(pd.DataFrame([k]))
+    assert "nan" not in md.lower() and "Lender: –" in md and "Documents" not in md

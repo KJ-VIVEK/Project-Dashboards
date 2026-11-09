@@ -477,57 +477,67 @@ def _m(v):
 
 with tabs[4]:
     n_closed = int((loans_f["status"] == "Closed").sum())
-    c = st.columns(5)
+    c = st.columns(3)
     kpi(c[0], "Outstanding now", loans_total)
     kpi(c[1], "EMI per month", loans_f["emi"].sum())
     kpi(c[2], "Loans", f"{len(loans_f) - n_closed} active · {n_closed} closed")
-    kpi(c[3], "Interest paid so far", loans_f["interest_paid"].sum(),
+    st.write("")
+    c = st.columns(3)
+    kpi(c[0], "Interest paid so far", loans_f["interest_paid"].sum(),
         help="Actual interest where you recorded it, otherwise the calculator's estimate. Closed loans only.")
-    kpi(c[4], "Other charges paid", loans_f["other_charges"].sum(), help="Processing fees and similar.")
-    c = st.columns(4)
-    kpi(c[0], "Total cost of borrowing", loans_f["cost_of_borrowing"].sum(), help="Interest + other charges.")
-    kpi(c[1], "Interest saved by closing early", loans_f["interest_saved"].sum(),
+    kpi(c[1], "Other charges paid", loans_f["other_charges"].sum(), help="Processing fees and similar.")
+    kpi(c[2], "Total cost of borrowing", loans_f["cost_of_borrowing"].sum(), help="Interest + other charges.")
+    st.write("")
+    c = st.columns(3)
+    kpi(c[0], "Interest saved by closing early", loans_f["interest_saved"].sum(),
         help="Full-tenure interest (standard EMI calculator) − interest you actually paid.")
-    kpi(c[2], "…after other charges", loans_f["net_saved"].sum(skipna=True) if loans_f["interest_saved"].notna().any() else 0,
+    kpi(c[1], "…after other charges", loans_f["net_saved"].sum(skipna=True) if loans_f["interest_saved"].notna().any() else 0,
         help="Interest saved − other charges you paid to close or set up the loan.")
-    kpi(c[3], "Bad + Worst debt outstanding",
+    kpi(c[2], "Bad + Worst debt outstanding",
         loans_f.loc[loans_f["category"].isin(["Bad", "Worst"]), "outstanding"].sum())
+    st.write("")
     st.caption("**Good**: builds an asset or income (home, education). **Bad**: buys something that loses value "
                "(car, gadgets). **Worst**: funds consumption at high interest (credit card, personal loan).")
 
     with st.expander("Add a loan", icon=":material/add:", expanded=loans_f.empty):
-        with st.form("add_loan", clear_on_submit=True):
-            c = st.columns([1.6, 1.4, 1, 1, 1], vertical_alignment="bottom")
+        with st.form("add_loan", clear_on_submit=True, border=False):
+            st.markdown("##### The loan")
+            c = st.columns(3)
             name = c[0].text_input("Loan name", placeholder="e.g. Bike loan")
             lender = c[1].text_input("Lender")
             cat = c[2].selectbox("Category", db.LOAN_CATEGORIES)
-            status = c[3].selectbox("Status", db.LOAN_STATUSES)
-            rate = c[4].number_input("Interest % p.a.", min_value=0.0, step=0.1, format="%.2f")
-            st.markdown("**Loan**")
-            c = st.columns(5, vertical_alignment="bottom")
+            c = st.columns(3)
+            status = c[0].selectbox("Status", db.LOAN_STATUSES)
+            rate = c[1].number_input("Interest % p.a.", min_value=0.0, step=0.1, format="%.2f")
+            emi = c[2].number_input("EMI (₹)", min_value=0.0, step=500.0, format="%.0f")
+            st.markdown("##### Amounts")
+            c = st.columns(4)
             down = c[0].number_input("Down payment (₹)", min_value=0.0, step=10000.0, format="%.0f",
                                      help="Paid from your pocket on day one, outside the loan.")
             prin = c[1].number_input("Loan amount (₹)", min_value=0.0, step=10000.0, format="%.0f")
             charges = c[2].number_input("Other charges (₹)", min_value=0.0, step=500.0, format="%.0f",
                                         help="Processing fee, foreclosure charge, documentation, insurance bundled in…")
-            emi = c[3].number_input("EMI (₹)", min_value=0.0, step=500.0, format="%.0f")
-            outs = c[4].number_input("Outstanding (₹)", min_value=0.0, step=10000.0, format="%.0f",
+            outs = c[3].number_input("Outstanding (₹)", min_value=0.0, step=10000.0, format="%.0f",
                                      help="Leave 0 for a closed loan.")
-            c = st.columns(4, vertical_alignment="bottom")
+            st.markdown("##### Dates")
+            c = st.columns(3)
             sd = c[0].date_input("Started", value=None)
             ed_ = c[1].date_input("Planned end", value=None, help="Original end of the tenure, used for the full-tenure interest.")
             closed_on = c[2].date_input("Closed on", value=None, help="Only for closed loans.")
-            link = c[3].text_input("Link to documents")
-            st.markdown("**What you paid** · optional, but it replaces the estimates with real figures")
-            c = st.columns(4, vertical_alignment="bottom")
+            st.markdown("##### What you paid")
+            st.caption("Optional, but it replaces the estimates with your real figures.")
+            c = st.columns(4)
             n_paid = c[0].number_input("Instalments paid", min_value=0, step=1)
             emi_paid = c[1].number_input("Paid through instalments (₹)", min_value=0.0, step=1000.0, format="%.0f",
                                          help="Total of all the instalments you paid.")
             emi_int = c[2].number_input("…of which interest (₹)", min_value=0.0, step=500.0, format="%.0f")
             closing = c[3].number_input("Paid to close the loan (₹)", min_value=0.0, step=1000.0, format="%.0f",
                                         help="The foreclosure amount, including any charges paid that day.")
+            st.markdown("##### Notes")
+            link = st.text_input("Link to documents")
             details = st.text_area("Details others should know", placeholder="Co-borrower, collateral, prepayment rules, "
                                    "where the papers are…", height=80)
+            st.write("")
             if st.form_submit_button("Add loan", type="primary"):
                 closed = status == "Closed"
                 if not name.strip():
@@ -556,16 +566,23 @@ with tabs[4]:
         with st.container(border=True):
             h = st.columns([4, 1.2])
             h[0].markdown(f"#### {r['name']}")
-            h[0].caption(" · ".join(x for x in [r["lender"] or None, f"{r['category']} debt",
+            h[0].caption(" · ".join(x for x in [r["lender"] if isinstance(r["lender"], str) and r["lender"] else None,
+                                                 f"{r['category']} debt",
                                                  f"{r['interest_rate']:g}% p.a." if pd.notna(r["interest_rate"]) else None] if x))
             h[1].markdown(f":green-badge[Closed]" if closed else ":orange-badge[Active]")
             if closed:
-                c = st.columns(4)
+                st.write("")
+                c = st.columns(3)
                 kpi(c[0], "Item cost", r["asset_cost"], help="Down payment + loan amount")
                 kpi(c[1], "Total you paid", r["total_paid"], help="Down payment + instalments + closing payment")
                 kpi(c[2], "Cost of borrowing", r["cost_of_borrowing"], help="Interest + other charges")
-                kpi(c[3], "Interest saved", r["interest_saved"],
-                    help="Full tenure interest (standard calculator) − interest paid", delta=None)
+                st.write("")
+                c = st.columns(3)
+                kpi(c[0], "Interest paid", r["interest_paid"], help="Your actual figure when recorded, else the estimate")
+                kpi(c[1], "Interest saved", r["interest_saved"],
+                    help="Full tenure interest (standard calculator) − interest paid")
+                kpi(c[2], "Saved after other charges", r["net_saved"])
+                st.write("")
                 tl = []
                 if pd.notna(r["tenure_months"]):
                     unit = "instalments" if pd.notna(r["installments_paid"]) else "months"
@@ -577,11 +594,6 @@ with tabs[4]:
                     tl.append(f"{int(r['elapsed_months'])} months from start to closing")
                 tl.append(f"{r['start_date'] or '–'} → {r['closed_date'] or '–'}")
                 st.caption(" · ".join(tl))
-                if pd.notna(r["lender_paid"]):
-                    st.markdown(f"**Paid to the lender:** {an.inr(r['lender_paid'])} "
-                                f"(instalments {an.inr(r['emi_paid'])} + closing {an.inr(r['closing_payment'])}) "
-                                f"− loan {an.inr(r['principal'])} = **{an.inr(r['lender_extra'])}** "
-                                f"(interest + other charges)")
                 rows = [("Down payment", r["down_payment"], "your pocket, day one"),
                         ("Instalments: principal", r["emi_principal"], "repaid through EMIs"),
                         ("Instalments: interest", r["emi_interest"] if pd.notna(r["emi_interest"]) else r["interest_est"],
@@ -602,14 +614,19 @@ with tabs[4]:
                     fig.update_layout(barmode="stack")
                     fig.update_yaxes(visible=False)
                     fig.update_xaxes(tickprefix="₹", tickformat="~s")
-                    show(style(fig, "Where your money went", height=190))
-                c = st.columns(3)
-                c[0].markdown(f"**Interest** \n{_m(r['interest_paid'])} paid vs {_m(r['interest_full'])} "
-                              f"over the full tenure")
-                c[1].markdown(f"**Saved** \n{_m(r['interest_saved'])} interest, "
-                              f"{_m(r['net_saved'])} after {_m(r['other_charges'])} charges")
-                c[2].markdown(f"**Closing payment** \n{_m(r['closing_payment'])} = "
-                              f"{_m(r['balance_cleared'])} balance + {_m(r['other_charges'])} charges")
+                    show(style(fig, "Where your money went", height=230))
+                st.divider()
+                st.markdown("##### How it adds up")
+                if pd.notna(r["interest_full"]):
+                    st.markdown(f"- **Interest:** {_m(r['interest_paid'])} paid vs {_m(r['interest_full'])} "
+                                f"over the full tenure, so {_m(r['interest_saved'])} saved")
+                if pd.notna(r["lender_paid"]):
+                    st.markdown(f"- **Paid to the lender:** {an.inr(r['lender_paid'])} "
+                                f"(instalments {an.inr(r['emi_paid'])} + closing {an.inr(r['closing_payment'])}) "
+                                f"− loan {an.inr(r['principal'])} = **{an.inr(r['lender_extra'])}** "
+                                f"(interest + other charges)")
+                st.markdown(f"- **Closing payment:** {_m(r['closing_payment'])} = "
+                            f"{_m(r['balance_cleared'])} balance + {_m(r['other_charges'])} charges")
                 if pd.notna(r["closing_gap"]) and abs(r["closing_gap"]) > 1:
                     st.warning(f"The closing payment is {an.inr(abs(r['closing_gap']))} "
                                f"{'more' if r['closing_gap'] > 0 else 'less'} than balance + charges. "
@@ -620,15 +637,21 @@ with tabs[4]:
                 st.caption("Interest saved uses the standard reducing-balance EMI formula on the loan amount, rate "
                            "and planned tenure. It needs the planned end date.")
             else:
-                c = st.columns(5)
+                st.write("")
+                c = st.columns(3)
                 kpi(c[0], "Loan amount", r["principal"])
                 kpi(c[1], "Outstanding", r["outstanding"])
                 kpi(c[2], "EMI per month", r["emi"])
-                kpi(c[3], "Other charges", r["other_charges"])
-                kpi(c[4], "Full-tenure interest", r["interest_full"],
+                st.write("")
+                c = st.columns(3)
+                kpi(c[0], "Other charges", r["other_charges"])
+                kpi(c[1], "Full-tenure interest", r["interest_full"],
                     help="What the whole tenure would cost at the standard EMI (needs rate and planned end).")
+                kpi(c[2], "Interest rate", f"{r['interest_rate']:g}%" if pd.notna(r["interest_rate"]) else "–")
+                st.write("")
                 st.progress(min(max(r["repaid_pct"] / 100, 0), 1), text=f"{r['repaid_pct']:.0f}% of principal repaid")
                 st.caption(f"{r['start_date'] or '–'} → {r['end_date'] or '–'}")
+        st.write("")
 
     if loans_total > 0:
         g = loans_f.groupby("category")["outstanding"].sum().reindex(db.LOAN_CATEGORIES).dropna()
