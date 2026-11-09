@@ -98,7 +98,7 @@ def test_metals_charges_and_value():
 def test_real_estate_metrics():
     r = pd.DataFrame({"cost": [5_000_000], "area_sqft": [1000], "registration": [300_000], "brokerage": [50_000],
                       "other_charges": [None], "rent_yielding": [True], "monthly_rent": [20_000],
-                      "current_value": [None]})
+                      "current_per_sqft": [None]})
     f = an.real_estate_frame(r).iloc[0]
     assert f.cost_per_sqft == 5000 and f.total_cost == 5_350_000 and f.value == 5_000_000
     assert f.rent_yield_pct == pytest.approx(240_000 / 5_350_000 * 100)
@@ -250,3 +250,27 @@ def test_taxes_paid_are_subtracted_from_income():
     assert df["amount"].sum() == 1000 - 150 - 50
     p = an.income_pivot(df, 2025)
     assert p.loc["Taxes Paid", 1] == -150 and p.loc["Taxes Paid", 2] == -50 and p.to_numpy().sum() == 800
+
+
+def test_real_estate_value_is_price_per_sqft_times_area():
+    r = pd.DataFrame({"cost": [5_000_000, 3_000_000], "area_sqft": [1000, 0], "registration": [0, 0],
+                      "brokerage": [0, 0], "other_charges": [0, 0], "rent_yielding": [False, False],
+                      "monthly_rent": [None, None], "current_per_sqft": [7500, 9000]})
+    f = an.real_estate_frame(r)
+    assert f.value[0] == 7_500_000 and f.gain[0] == 2_500_000
+    assert f.value[1] == 3_000_000          # no area -> cannot value by sq ft -> cost
+
+
+def test_migration_converts_total_current_value_to_per_sqft():
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        old = os.path.join(d, "old.db")
+        c = sqlite3.connect(old)
+        c.executescript("CREATE TABLE real_estate (id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT, "
+                        "location TEXT, purchase_date TEXT, cost REAL NOT NULL, area_sqft REAL, registration REAL, "
+                        "brokerage REAL, other_charges REAL, rent_yielding INTEGER NOT NULL DEFAULT 0, "
+                        "monthly_rent REAL, current_value REAL, note TEXT);"
+                        "INSERT INTO real_estate(name, cost, area_sqft, current_value) VALUES ('Flat', 1, 1000, 6900000);")
+        c.commit(); c.close()
+        db.init_db(old)
+        assert db.get_table("real_estate", old).iloc[0]["current_per_sqft"] == 6900

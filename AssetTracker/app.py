@@ -57,9 +57,9 @@ def saved_msg(stats):
 
 
 def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None):
-    """Editable sheet: add rows at the bottom, edit cells, select a row and press Delete. Save writes the diff."""
+    """Editable sheet: edit cells or delete rows (new rows are added through the forms above). Save writes the diff."""
     cfg = {"id": None, **config}
-    ed = st.data_editor(shown, key=f"ed_{key}_{version(key)}", num_rows="dynamic", hide_index=True,
+    ed = st.data_editor(shown, key=f"ed_{key}_{version(key)}", num_rows="delete", hide_index=True,
                         column_config=cfg, width="stretch")
     c1, c2 = st.columns([1, 5], vertical_alignment="center")
     if c1.button("Save changes", key=f"save_{key}", type="primary"):
@@ -70,8 +70,7 @@ def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None)
         flash(saved_msg(db.sync_table(table, orig, edited, required)))
         bump(key)
         st.rerun()
-    c2.caption(hint or "Add a row at the bottom of the table; to delete, tick the row's left edge and press Delete; "
-               "then Save changes.")
+    c2.caption(hint or "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes.")
 
 
 def money_cfg(label, **kw):
@@ -821,7 +820,7 @@ with tabs[7]:
     c = st.columns(5)
     kpi(c[0], "Total paid (incl. charges)", re_f["total_cost"].sum())
     kpi(c[1], "Extra charges paid", re_f["extra_charges"].sum())
-    kpi(c[2], "Current value", re_f["value"].sum(), help="Uses purchase cost when you haven't entered a current value")
+    kpi(c[2], "Current value", re_f["value"].sum(), help="Current price per sq ft × area. Uses purchase cost until both are filled in")
     kpi(c[3], "Rent per month", re_f.loc[re_f["rent_yielding"].astype(bool), "monthly_rent"].sum())
     kpi(c[4], "Gain / loss", re_f["gain"].sum())
     with st.form("add_re", clear_on_submit=True):
@@ -836,7 +835,8 @@ with tabs[7]:
         reg = c[2].number_input("Registration + stamp duty (₹)", min_value=0.0, format="%.0f")
         brk = c[3].number_input("Brokerage (₹)", min_value=0.0, format="%.0f")
         oth = c[4].number_input("Other charges (₹)", min_value=0.0, format="%.0f")
-        cur = c[5].number_input("Current value (₹)", min_value=0.0, step=100000.0, format="%.0f")
+        cur = c[5].number_input("Current price per sq ft (₹)", min_value=0.0, step=100.0, format="%.0f",
+                                help="Current value = this × area")
         c = st.columns([1, 1, 3], vertical_alignment="bottom")
         ry = c[0].checkbox("Rent yielding")
         rent = c[1].number_input("Rent per month (₹)", min_value=0.0, step=1000.0, format="%.0f")
@@ -846,7 +846,7 @@ with tabs[7]:
                                           "cost": cost, "area_sqft": area or None, "registration": reg or None,
                                           "brokerage": brk or None, "other_charges": oth or None,
                                           "rent_yielding": ry, "monthly_rent": rent or None,
-                                          "current_value": cur or None})
+                                          "current_per_sqft": cur or None})
                 flash("Property added.")
                 st.rerun()
             else:
@@ -858,14 +858,16 @@ with tabs[7]:
         "cost": money_cfg("Cost (₹)", required=True), "area_sqft": st.column_config.NumberColumn("Sq ft", min_value=0),
         "registration": money_cfg("Registration + stamp (₹)"), "brokerage": money_cfg("Brokerage (₹)"),
         "other_charges": money_cfg("Other charges (₹)"), "rent_yielding": st.column_config.CheckboxColumn("Rent yielding"),
-        "monthly_rent": money_cfg("Rent / month (₹)"), "current_value": money_cfg("Current value (₹)"),
+        "monthly_rent": money_cfg("Rent / month (₹)"), "current_per_sqft": money_cfg("Price / sq ft now (₹)"),
         "note": "Note"}, ("name", "cost"), "real_estate")
     if not re_f.empty:
         st.markdown("**Numbers per property**")
-        t = re_f[["name", "location", "cost", "cost_per_sqft", "extra_charges", "total_cost", "value", "gain",
+        t = re_f[["name", "location", "area_sqft", "cost", "cost_per_sqft", "current_per_sqft", "extra_charges", "total_cost", "value", "gain",
                   "rent_yielding", "monthly_rent", "rent_yield_pct"]]
         st.dataframe(t, hide_index=True, width="stretch", column_config={
             "name": "Property", "location": "Location",
+            "area_sqft": st.column_config.NumberColumn("Sq ft", format="%.0f"),
+            "current_per_sqft": st.column_config.NumberColumn("Price / sq ft now", format="₹%.0f"),
             "cost": st.column_config.NumberColumn("Cost", format="₹%.0f"),
             "cost_per_sqft": st.column_config.NumberColumn("Cost / sq ft", format="₹%.0f"),
             "extra_charges": st.column_config.NumberColumn("Extra charges", format="₹%.0f"),

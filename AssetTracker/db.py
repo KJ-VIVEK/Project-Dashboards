@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS real_estate (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL, kind TEXT, location TEXT, purchase_date TEXT, cost REAL NOT NULL,
     area_sqft REAL, registration REAL, brokerage REAL, other_charges REAL,
-    rent_yielding INTEGER NOT NULL DEFAULT 0, monthly_rent REAL, current_value REAL, note TEXT);
+    rent_yielding INTEGER NOT NULL DEFAULT 0, monthly_rent REAL, current_per_sqft REAL, note TEXT);
 CREATE TABLE IF NOT EXISTS target_pcts (bucket TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +93,7 @@ TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
     "metals": (["metal", "form", "description", "date", "grams", "rate_per_g", "making_charges", "gst",
                 "other_charges", "purity", "note"], {"date"}, set()),
     "real_estate": (["name", "kind", "location", "purchase_date", "cost", "area_sqft", "registration", "brokerage",
-                     "other_charges", "rent_yielding", "monthly_rent", "current_value", "note"],
+                     "other_charges", "rent_yielding", "monthly_rent", "current_per_sqft", "note"],
                     {"purchase_date"}, {"rent_yielding"}),
     "notes": (["title", "body", "kind", "done", "created", "updated"], set(), {"done"}),
 }
@@ -117,7 +117,8 @@ def connect(path: str | None = None):
 
 
 # columns added after the first release: (table, column, ddl)
-_MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_rate", "REAL")]
+_MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_rate", "REAL"),
+               ("real_estate", "current_per_sqft", "REAL")]
 
 
 def init_db(path: str | None = None) -> None:
@@ -126,6 +127,10 @@ def init_db(path: str | None = None) -> None:
         for table, col, ddl in _MIGRATIONS:
             if col not in [r["name"] for r in c.execute(f"PRAGMA table_info({table})")]:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+        # real estate used to store a total current value; convert it to a per-sq-ft price
+        if "current_value" in [r["name"] for r in c.execute("PRAGMA table_info(real_estate)")]:
+            c.execute("UPDATE real_estate SET current_per_sqft = current_value / area_sqft "
+                      "WHERE current_per_sqft IS NULL AND current_value > 0 AND area_sqft > 0")
 
 
 # ---------- generic reads ----------
