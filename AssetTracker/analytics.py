@@ -619,6 +619,30 @@ def memo_pivot(income: pd.DataFrame, year: int | None, by="month", col="other_de
     return amt[dt.notna()].groupby(dt[dt.notna()].dt.year).sum()
 
 
+def rsu_value(units, usd_price, usd_inr) -> dict:
+    """RSUs vested at their buy (vest-day) value: units x USD price per share, converted at the USD->INR rate."""
+    usd = float(units or 0) * float(usd_price or 0)
+    return {"usd": usd, "inr": usd * float(usd_inr or 0)}
+
+
+def average_growth(yoy: pd.Series) -> float | None:
+    """Mean of the year-on-year growth percentages that exist (None when there are none)."""
+    s = pd.to_numeric(yoy, errors="coerce").dropna()
+    return float(s.mean()) if len(s) else None
+
+
+def growth_line(net: pd.Series, avg_pct: float | None) -> pd.Series:
+    """Where income would be if it grew by `avg_pct` every year from its first positive year (NaN before it)."""
+    out = pd.Series(float("nan"), index=net.index)
+    pos = net[net > 0]
+    if avg_pct is None or pos.empty:
+        return out
+    first = pos.index[0]
+    for i, k in enumerate([k for k in net.index if k >= first]):
+        out[k] = pos.iloc[0] * (1 + avg_pct / 100) ** i
+    return out
+
+
 def inflow_by_year(df: pd.DataFrame) -> pd.DataFrame:
     """Cash inflow per year: before tax, after tax, and the year-on-year change of the after-tax figure (%).
     `df` is an income_frame. YoY is NaN for the first year or when the previous year was zero or negative."""
