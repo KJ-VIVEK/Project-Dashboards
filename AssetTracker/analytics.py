@@ -121,6 +121,20 @@ def build_positions(securities: pd.DataFrame, trades: pd.DataFrame, dividends: p
 
 
 # ---------------------------------------------------------------- income
+def apply_editor_edits(df: pd.DataFrame, edited_rows: dict | None) -> pd.DataFrame:
+    """The table as it looks with the cells typed so far in a data_editor (its `edited_rows`: {row position: {column:
+    value}}), so figures worked out from those cells can be shown before anything is saved."""
+    out = df.reset_index(drop=True).copy()
+    for pos, changes in (edited_rows or {}).items():
+        pos = int(pos)
+        if 0 <= pos < len(out):
+            for col, val in changes.items():
+                if col in out.columns:
+                    out[col] = out[col].astype(object)
+                    out.at[pos, col] = val
+    return out
+
+
 def extra_tax_rows(income: pd.DataFrame, default_pct: float = 0.0) -> pd.Series:
     """Extra tax to be paid on each Source row (rupees, positive = tax due; 0 where none applies).
 

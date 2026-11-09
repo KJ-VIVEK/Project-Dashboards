@@ -972,3 +972,15 @@ def test_default_extra_tax_also_applies_to_stock_dividends_and_sale_profit():
     sold = pd.DataFrame({"date": [date(2025, 3, 1)], "pnl": [200.0]})
     df = an.income_frame(inc, div, sold, extra_tax_pct=10.0)
     assert round(-df.loc[df["source"] == "Extra tax to be paid", "amount"].sum(), 6) == 30
+
+
+def test_extra_tax_column_follows_cells_typed_before_saving():
+    inc = _src([[date(2025, 1, 1), "Dividend/FD", "fd", 1000.0, None, None],
+                [date(2025, 1, 2), "Miscellaneous", "gift", 2000.0, None, None]])
+    inc["tax_pct"] = [None, None]
+    typed = {"0": {"tax_pct": 12.5}, 1: {"amount": 4000.0, "tax_pct": 10.0}}
+    live = an.apply_editor_edits(inc, typed)
+    assert list(an.extra_tax_rows(live, 0.0)) == [125.0, 400.0]         # amount x the % just typed
+    assert inc["tax_pct"].isna().all()                                   # the saved table is untouched
+    assert list(an.extra_tax_rows(inc, 0.0)) == [0.0, 0.0]
+    assert an.apply_editor_edits(inc, None).equals(inc.reset_index(drop=True))

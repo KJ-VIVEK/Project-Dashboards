@@ -113,13 +113,24 @@ def saved_msg(stats):
     return msg
 
 
-def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None):
-    """Editable sheet: edit cells or delete rows (new rows are added through the forms above). Save writes the diff."""
+def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None, delete_box=False):
+    """Editable sheet: edit cells or delete rows (new rows are added through the forms above). Save writes the diff.
+
+    delete_box=True uses a fixed-size editor with a Delete checkbox column instead of the editor's own row deletion:
+    Streamlit keeps typed-but-unsaved edits across data changes only for fixed-size editors, which is what lets a
+    column worked out from the typed cells (extra tax to be paid) update live."""
     cfg = {"id": None, **config}
-    ed = st.data_editor(shown, key=f"ed_{key}_{version(key)}", num_rows="delete", hide_index=True,
-                        column_config=cfg, width="stretch")
+    if delete_box:
+        shown = shown.copy()
+        shown.insert(0, "delete", False)
+        cfg = {"delete": st.column_config.CheckboxColumn("Delete", help="Tick, then press Save changes to delete the row."),
+               **cfg}
+    ed = st.data_editor(shown, key=f"ed_{key}_{version(key)}", num_rows="fixed" if delete_box else "delete",
+                        hide_index=True, column_config=cfg, width="stretch")
     c1, c2 = st.columns([1, 5], vertical_alignment="center")
     if c1.button("Save changes", key=f"save_{key}", type="primary"):
+        if delete_box:
+            ed = ed[~ed["delete"].fillna(False).astype(bool)].drop(columns="delete")
         edited = to_db(ed) if to_db else ed
         problems = validation.validate(table, edited, required)
         if problems:        # say exactly what is wrong; nothing is saved and the editor keeps what was typed
@@ -132,7 +143,8 @@ def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None)
             flash(saved_msg(db.sync_table(table, orig, edited, required)))
             bump(key)
             st.rerun()
-    c2.caption(hint or "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes.")
+    c2.caption(hint or ("Edit cells directly. To delete, tick Delete on the row; then Save changes." if delete_box else
+                        "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes."))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -595,12 +607,15 @@ with tabs[1]:
     sub = income[mask]
     # tax to be paid on each row, shown next to the % (read-only: it is worked out from the saved amount and %)
     cols_ = list(sub.columns)
-    shown_inc = sub.assign(tax_due=an.extra_tax_rows(sub, extra_pct).where(lambda s: s != 0))
+    typed = st.session_state.get(f"ed_income_{version('income')}", {}).get("edited_rows", {})
+    live_due = an.extra_tax_rows(an.apply_editor_edits(sub, typed), extra_pct)      # uses cells typed but not saved yet
+    shown_inc = sub.assign(tax_due=live_due.where(live_due != 0).values)
     cols_.insert(cols_.index("tax_pct") + 1, "tax_due")
     shown_inc = shown_inc[cols_]
     st.caption("**Extra tax (%)** is the % to charge on a Dividend/FD, PL Booking or Miscellaneous entry; **Extra tax to be "
-               "paid (₹)** shows the result (amount × %). Type a % on entries whose tax shows 0. An entry with no % uses the "
-               f"default ({extra_pct:g}%) only when no tax is entered on it. Press Save changes to refresh the column.")
+               "paid (₹)** shows the result (amount × %) as soon as you type the %. Type a % on entries whose tax shows 0. "
+               f"An entry with no % uses the default ({extra_pct:g}%) only when no tax is entered on it. Press Save changes "
+               "to keep it.")
     edit_table("income", shown_inc, sub, {
         "date": dcol("Date", required=True),
         "source": st.column_config.SelectboxColumn("Section", options=db.INCOME_SOURCES, required=True),
@@ -623,7 +638,7 @@ with tabs[1]:
                                                       help="Tax = sold × sell price × this rate, deducted as Taxes Paid."),
         "other_deductions": money_cfg("EPF or NPS or Vouchers or Insurance (₹)",
                                       help="EPF, NPS, vouchers or insurance taken off this inflow. Recorded only, not subtracted.")},
-        ("date", "source", "amount"), "income")
+        ("date", "source", "amount"), "income", delete_box=True)
 
 # ================================================================== 3. CASH & SAVINGS
 with tabs[2]:
