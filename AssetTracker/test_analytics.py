@@ -610,3 +610,30 @@ def test_a_renewal_that_has_not_started_does_not_double_the_current_rate():
     f = an.insurance_frame(v, today=TODAY)
     assert f.iloc[4]["status"] == "Not started" and f.iloc[4]["per_year"] == 0
     assert an.insurance_policies(f).iloc[0]["per_year"] == pytest.approx(1200 + 7200)
+
+
+def test_renewal_end_and_terms_group_od_and_tp_by_renewal():
+    assert an.renewal_end(date(2026, 3, 10)) == date(2027, 3, 9)
+    assert an.renewal_end(date(2024, 2, 29)) == date(2025, 2, 28)
+    assert an.renewal_end(date(2026, 1, 1)) == date(2026, 12, 31)
+    rows = []
+    for i, (s, e, od, tp, no) in enumerate([
+            (date(2024, 3, 10), date(2025, 3, 9), 6000, 5286, "P1"),      # first term: OD + a 5-year TP
+            (date(2025, 3, 10), date(2026, 3, 9), 5500, 0, "P2"),         # renewal: OD only
+            (date(2026, 3, 10), date(2027, 3, 9), 5200, 0, "P3")]):
+        for comp, prem, end in (("Own Damage (OD)", od, e), ("Third Party (TP)", tp, date(2029, 3, 9) if i == 0 else e)):
+            if prem:
+                rows.append({"id": 10 + len(rows), "parent_id": 1, "component": comp, "name": "Duke", "premium": float(prem),
+                             "frequency": db.ONE_TIME, "start_date": s, "end_date": end, "policy_no": no, "active": True})
+    kids = an.insurance_frame(pd.DataFrame(rows), today=TODAY)
+    terms = an.insurance_terms(kids)
+    assert list(terms["policy_no"]) == ["P3", "P2", "P1"]                       # newest first
+    assert list(terms["od"]) == [5200, 5500, 6000] and terms["tp"].isna().sum() == 2 and terms["tp"].iloc[2] == 5286
+    assert list(terms["total"]) == [5200, 5500, 6000 + 5286]
+    assert list(terms["status"]) == ["Active", "Inactive", "Active"]            # the 5-year TP keeps term 1 alive
+
+
+def test_policy_summary_lists_only_covers_still_running():
+    v = an.insurance_frame(_vehicle(), today=TODAY)
+    s = an.insurance_policies(v).iloc[0]["covers"]
+    assert "Third Party" in s and s.count("Own Damage") == 1                  # the ended OD is not listed

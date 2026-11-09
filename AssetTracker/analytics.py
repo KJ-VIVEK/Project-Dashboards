@@ -307,12 +307,49 @@ def insurance_policies(frame: pd.DataFrame) -> pd.DataFrame:
                  paid_to_date=float(paid.sum()) if paid.notna().any() else float("nan"),
                  **{c: float(pd.to_numeric(rows[c], errors="coerce").fillna(0).sum())
                     for c in ("per_year", "per_month", "year_cost")})
-        d["covers"] = " · ".join(
+        live = kids[kids["status"] != "Inactive"].sort_values("start_date", na_position="first")
+        d["covers"] = (" · ".join(
             f"{(k['component'] if isinstance(k['component'], str) else k['name'])} ({k['status'].lower()}"
             + (f", to {k['end_date']}" if hasattr(k["end_date"], "year") and pd.notna(k["end_date"]) else "") + ")"
-            for _, k in kids.sort_values("start_date", na_position="first").iterrows())
+            for _, k in live.iterrows()) or ("all covers ended" if len(kids) else ""))
         out.append(d)
     return pd.DataFrame(out, columns=list(f.columns) + ["n_covers", "covers"])
+
+
+def renewal_end(start):
+    """A one-year term's last day: the day before the next anniversary (10 Mar 2026 -> 9 Mar 2027)."""
+    from datetime import date as _date, timedelta
+    try:
+        nxt = _date(start.year + 1, start.month, start.day)
+    except ValueError:                      # 29 Feb
+        nxt = _date(start.year + 1, 3, 1)
+    return nxt - timedelta(days=1)
+
+
+def insurance_terms(covers: pd.DataFrame) -> pd.DataFrame:
+    """The renewals of one motor policy. Covers that start together on the same policy number form one term, with its
+    Own Damage and Third Party premiums side by side (a 5-year TP bought in the first term simply has no TP premium in
+    the later ones)."""
+    if covers.empty:
+        return pd.DataFrame(columns=["from", "to", "policy_no", "od", "tp", "other", "total", "status"])
+    c = covers.copy()
+    c["_key"] = c["start_date"].astype(str) + "|" + c["policy_no"].fillna("").astype(str)
+    order = {"Active": 0, "Not started": 1, "Inactive": 2}
+    rows = []
+    for _, g in c.groupby("_key", sort=False):
+        def tot(tag):
+            return float(g.loc[g["component"].fillna("").str.contains(tag, regex=False), "premium_now"].sum()) \
+                if g["component"].fillna("").str.contains(tag, regex=False).any() else float("nan")
+        od, tp = tot("(OD)"), tot("(TP)")
+        known = g["component"].fillna("").str.contains("(OD)", regex=False) | g["component"].fillna("").str.contains("(TP)", regex=False)
+        other = float(g.loc[~known, "premium_now"].sum()) if (~known).any() else float("nan")
+        total = float(g["premium_now"].sum())
+        ends = [e for e in g["end_date"] if hasattr(e, "year") and pd.notna(e)]
+        rows.append({"from": g["start_date"].iloc[0], "to": max(ends) if ends else None,
+                     "policy_no": g["policy_no"].iloc[0] if isinstance(g["policy_no"].iloc[0], str) else "",
+                     "od": od, "tp": tp, "other": other, "total": total,
+                     "status": min(g["status"], key=lambda x: order.get(x, 3))})
+    return pd.DataFrame(rows).sort_values("from", ascending=False, na_position="last").reset_index(drop=True)
 
 
 def insurance_payments(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, today=None) -> pd.DataFrame:

@@ -532,6 +532,47 @@ with tabs[3]:
                     flash("Policy added.")
                     st.rerun()
 
+    with st.expander("Renew a motor policy (this year's OD and TP)", icon=":material/two_wheeler:"):
+        st.caption("Make one main policy per vehicle (e.g. DUKE 390). Every year, add that year's renewal here: it adds the "
+                   "Own Damage and Third Party covers with their own premiums under the same policy. Leave the TP "
+                   "premium at 0 when the Third Party cover was already paid for several years.")
+        roots_r = insurance[insurance["parent_id"].isna()]
+        if roots_r.empty:
+            st.write("Add the main policy first (Add a policy, type Vehicle).")
+        else:
+            with st.form("renew_motor", clear_on_submit=True, border=False):
+                rn2 = {int(r["id"]): r["name"] for _, r in roots_r.iterrows()}
+                c = st.columns(3)
+                rpid = c[0].selectbox("Policy", list(rn2), format_func=rn2.get, key="ren_policy")
+                rno = c[1].text_input("Policy number for this renewal", key="ren_no")
+                rs = dinput(c[2], "Starts on", value=None, key="ren_s")
+                c = st.columns(3)
+                re_ = dinput(c[0], "Ends on", value=None, key="ren_e",
+                             help="Leave empty for one year (the day before the next anniversary).")
+                od_p = c[1].number_input("Own Damage premium (₹)", min_value=0.0, step=500.0, format="%.2f", key="ren_od")
+                tp_p = c[2].number_input("Third Party premium (₹)", min_value=0.0, step=500.0, format="%.2f", key="ren_tp",
+                                         help="0 when TP is already paid for several years.")
+                c = st.columns(3)
+                tp_e = dinput(c[0], "Third Party ends on", value=None, key="ren_tpe",
+                              help="Leave empty to end with this renewal. For a 5-year TP, give its last day.")
+                if st.form_submit_button("Add renewal", type="primary"):
+                    if rs is None or (od_p <= 0 and tp_p <= 0):
+                        st.error("A start date and an Own Damage or Third Party premium are needed.")
+                    elif re_ and re_ < rs or (tp_e and tp_e < rs):
+                        st.error("An end date is before the start date.")
+                    else:
+                        end = re_ or an.renewal_end(rs)
+                        par = roots_r[roots_r["id"] == rpid].iloc[0]
+                        for label, prem_, end_ in (("Own Damage (OD)", od_p, end), ("Third Party (TP)", tp_p, tp_e or end)):
+                            if prem_ > 0:
+                                db.insert("insurance", {
+                                    "name": f"{par['name']} · {label}", "type": par["type"], "provider": par["provider"],
+                                    "policy_no": rno or par["policy_no"], "premium": prem_, "frequency": db.ONE_TIME,
+                                    "start_date": rs, "end_date": end_, "active": True, "parent_id": rpid,
+                                    "component": label})
+                        flash(f"Renewal from {rs} added to {par['name']}.")
+                        st.rerun()
+
     with st.expander("Add a cover to a policy (OD, TP, renewal)", icon=":material/shield:"):
         st.caption("Renew the yearly Own Damage cover, add a multi-year Third Party cover, or any add-on. It is "
                    "counted under the same policy.")
@@ -621,15 +662,22 @@ with tabs[3]:
                    "Active means the policy is running today. A policy made of covers (OD / TP) is active while any "
                    "cover is.")
         kids = ins_y[ins_y["parent_id"].notna()]
-        if not kids.empty:
-            with st.expander("Covers of each policy (OD, TP)", icon=":material/shield:"):
-                pn = dict(zip(insurance["id"], insurance["name"]))
+        for _, mp in pol[pol["n_covers"] > 0].iterrows():
+            ks = kids[kids["parent_id"] == mp["id"]]
+            with st.expander(f"{mp['name']}: renewals and covers", icon=":material/two_wheeler:"):
+                tm = an.insurance_terms(ks)
+                mny = lambda v: "–" if pd.isna(v) else an.inr(v)    # noqa: E731
+                st.markdown("**Renewals**")
+                st.dataframe(pd.DataFrame({
+                    "From": tm["from"], "Covered until": tm["to"], "Policy no.": tm["policy_no"], "Status": tm["status"].map(dots),
+                    "Own Damage (OD)": tm["od"].map(mny), "Third Party (TP)": tm["tp"].map(mny),
+                    "Total premium": tm["total"].map(an.inr)}), hide_index=True, width="stretch")
+                st.markdown("**Every cover**")
                 kt = pd.DataFrame({
-                    "Policy": kids["parent_id"].map(pn), "Cover": kids["component"], "Status": kids["status"].map(dots),
-                    "From": kids["start_date"], "To": kids["end_date"], "Premium": kids["premium_now"].map(an.inr),
-                    "Premium covers": kids["frequency"], "Per year": kids["per_year"].map(an.inr),
-                    "Paid to date": kids["paid_to_date"].map(lambda v: "–" if pd.isna(v) else an.inr(v))}
-                ).sort_values(["Policy", "Cover", "From"])
+                    "Cover": ks["component"], "Status": ks["status"].map(dots), "From": ks["start_date"],
+                    "To": ks["end_date"], "Premium": ks["premium_now"].map(an.inr), "Premium covers": ks["frequency"],
+                    "Per year": ks["per_year"].map(an.inr), "Paid to date": ks["paid_to_date"].map(mny)}
+                ).sort_values(["From", "Cover"], ascending=[False, True])
                 st.dataframe(kt, hide_index=True, width="stretch")
                 st.caption("A one-time premium covers its whole period and is spread over those months, so a "
                            "5-year Third Party premium shows as one fifth of it per year.")
