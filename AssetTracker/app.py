@@ -749,6 +749,9 @@ with tabs[6]:
                             help="Spot price converted to ₹/g: no import duty, GST or dealer margin")
                 c[1].metric("Price used", an.inr(prices[metal]) if prices[metal] else "–",
                             help="International price + local premium")
+                if spot and fx:
+                    st.caption(f"International = ${spot * market.OZ_GRAMS / fx:,.0f}/oz (COMEX futures) × "
+                               f"₹{fx:,.2f}/$ ÷ {market.OZ_GRAMS} g/oz = ₹{spot:,.0f}/g")
                 premium_in[metal] = c[2].number_input(
                     "Local premium %", value=db.metal_premium(metal), step=0.5, format="%.2f",
                     key=f"prem_{metal}_{db.metal_premium(metal)}",
