@@ -810,3 +810,14 @@ def test_inflow_by_year_and_yoy_change():
     assert y.loc[2025, "net"] == 0 and y.loc[2025, "yoy_pct"] == -100.0      # a missing year is shown as zero
     assert pd.isna(y.loc[2026, "yoy_pct"])                       # no % from a zero year
     assert an.inflow_by_year(an.income_frame(inc.iloc[0:0], d, r)).empty
+
+
+def test_memo_row_shows_epf_nps_per_month_and_year_without_touching_totals():
+    inc = _src([[date(2025, 1, 28), "Salary", "A", 1000.0, 100.0, 50.0], [date(2025, 1, 30), "Salary", "B", 500.0, None, 25.0],
+                [date(2026, 3, 1), "Salary", "A", 700.0, 70.0, None]])
+    m = an.memo_pivot(inc, 2025, "month")
+    assert m[1] == 75 and m.sum() == 75 and len(m) == 12
+    y = an.memo_pivot(inc, None, "year")
+    assert y[2025] == 75 and y.get(2026, 0) == 0
+    d, r = _empty_auto()
+    assert _source_total_row(an.income_frame(inc, d, r), 2025).loc["Total", "Total"] == 1500 - 100
