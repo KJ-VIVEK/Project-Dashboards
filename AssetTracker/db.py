@@ -21,7 +21,9 @@ SECURITY_CATEGORIES = [
     "International - Stable", "International - Risky", "REITs/InvITs", "Unlisted Stocks", "Crypto",
 ]
 METALS = ["Gold", "Silver"]
-INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate"]
+SAVINGS_BUCKET = "Cash & Savings"
+INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
+CURRENCIES = ["INR", "USD"]
 SAVINGS_KINDS = ["Savings Account", "Cash in Hand", "FD", "RD", "EPF", "NPS", "PPF", "Short-term Goal"]
 INSURANCE_TYPES = ["Term Life", "Health", "Life/Endowment", "Vehicle", "Home", "Travel", "Other"]
 FREQUENCIES = {"Monthly": 12, "Quarterly": 4, "Half-Yearly": 2, "Yearly": 1}
@@ -35,12 +37,13 @@ CREATE TABLE IF NOT EXISTS income (
 CREATE TABLE IF NOT EXISTS securities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE, symbol TEXT, category TEXT NOT NULL, reason TEXT,
-    current_price REAL, price_date TEXT);
+    current_price REAL, price_date TEXT, currency TEXT DEFAULT 'INR');
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     security_id INTEGER NOT NULL, date TEXT NOT NULL,
     side TEXT NOT NULL CHECK (side IN ('Buy','Sell')),
-    qty REAL NOT NULL CHECK (qty > 0), price REAL NOT NULL CHECK (price >= 0), fees REAL, note TEXT);
+    qty REAL NOT NULL CHECK (qty > 0), price REAL NOT NULL CHECK (price >= 0), fees REAL, note TEXT,
+    fx_rate REAL);
 CREATE TABLE IF NOT EXISTS dividends (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     security_id INTEGER NOT NULL, date TEXT NOT NULL, amount REAL NOT NULL, note TEXT);
@@ -66,7 +69,7 @@ CREATE TABLE IF NOT EXISTS real_estate (
     name TEXT NOT NULL, kind TEXT, location TEXT, purchase_date TEXT, cost REAL NOT NULL,
     area_sqft REAL, registration REAL, brokerage REAL, other_charges REAL,
     rent_yielding INTEGER NOT NULL DEFAULT 0, monthly_rent REAL, current_value REAL, note TEXT);
-CREATE TABLE IF NOT EXISTS targets (bucket TEXT PRIMARY KEY, amount REAL NOT NULL CHECK (amount >= 0));
+CREATE TABLE IF NOT EXISTS target_pcts (bucket TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL, body TEXT, kind TEXT, done INTEGER NOT NULL DEFAULT 0, created TEXT, updated TEXT);
@@ -76,8 +79,9 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 # table -> (persisted columns excluding id, columns holding dates, columns holding 0/1 flags)
 TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
     "income": (["date", "source", "description", "amount"], {"date"}, set()),
-    "securities": (["name", "symbol", "category", "reason", "current_price", "price_date"], {"price_date"}, set()),
-    "trades": (["security_id", "date", "side", "qty", "price", "fees", "note"], {"date"}, set()),
+    "securities": (["name", "symbol", "category", "reason", "current_price", "price_date", "currency"],
+                   {"price_date"}, set()),
+    "trades": (["security_id", "date", "side", "qty", "price", "fees", "note", "fx_rate"], {"date"}, set()),
     "dividends": (["security_id", "date", "amount", "note"], {"date"}, set()),
     "savings": (["kind", "name", "amount", "purpose", "interest_rate", "start_date", "maturity_date", "target", "note"],
                 {"start_date", "maturity_date"}, set()),
@@ -111,9 +115,16 @@ def connect(path: str | None = None):
         conn.close()
 
 
+# columns added after the first release: (table, column, ddl)
+_MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_rate", "REAL")]
+
+
 def init_db(path: str | None = None) -> None:
     with connect(path) as c:
         c.executescript(SCHEMA)
+        for table, col, ddl in _MIGRATIONS:
+            if col not in [r["name"] for r in c.execute(f"PRAGMA table_info({table})")]:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
 # ---------- generic reads ----------
@@ -232,23 +243,24 @@ def delete_security(security_id: int, path: str | None = None) -> None:
         c.execute("DELETE FROM securities WHERE id=?", (security_id,))
 
 
-# ---------- targets & meta ----------
-def get_targets(path: str | None = None) -> dict[str, float]:
+# ---------- ideal allocation (percent of income) ----------
+def get_target_pcts(path: str | None = None) -> dict[str, float]:
     with connect(path) as c:
-        return {r["bucket"]: r["amount"] for r in c.execute("SELECT bucket, amount FROM targets")}
+        return {r["bucket"]: r["pct"] for r in c.execute("SELECT bucket, pct FROM target_pcts")}
 
 
-def set_targets(targets: dict[str, float], path: str | None = None) -> None:
+def set_target_pcts(pcts: dict[str, float], path: str | None = None) -> None:
     with connect(path) as c:
-        for bucket, amount in targets.items():
-            amount = float(amount or 0)
-            if amount > 0:
-                c.execute("INSERT INTO targets(bucket, amount) VALUES (?,?) "
-                          "ON CONFLICT(bucket) DO UPDATE SET amount=excluded.amount", (bucket, amount))
+        for bucket, pct in pcts.items():
+            pct = min(max(float(pct or 0), 0.0), 100.0)
+            if pct > 0:
+                c.execute("INSERT INTO target_pcts(bucket, pct) VALUES (?,?) "
+                          "ON CONFLICT(bucket) DO UPDATE SET pct=excluded.pct", (bucket, pct))
             else:
-                c.execute("DELETE FROM targets WHERE bucket=?", (bucket,))
+                c.execute("DELETE FROM target_pcts WHERE bucket=?", (bucket,))
 
 
+# ---------- meta ----------
 def meta_get(key: str, default=None, path: str | None = None):
     with connect(path) as c:
         r = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -259,6 +271,13 @@ def meta_set(key: str, value, path: str | None = None) -> None:
     with connect(path) as c:
         c.execute("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                   (key, str(value)))
+
+
+def usd_inr(path: str | None = None) -> float:
+    """USD->INR in force: the manual override when switched on, else the last live rate (0 if never known)."""
+    if meta_get("fx_use_manual", "0", path) == "1":
+        return float(meta_get("fx_manual", 0, path) or 0)
+    return float(meta_get("fx_usdinr", 0, path) or 0)
 
 
 def metal_prices(path: str | None = None) -> dict[str, float]:

@@ -104,11 +104,57 @@ def test_real_estate_metrics():
     assert f.rent_yield_pct == pytest.approx(240_000 / 5_350_000 * 100)
 
 
-def test_allocation_target_vs_reality():
+def test_ideal_is_income_times_percent():
     b = pd.DataFrame({"bucket": ["Gold", "Crypto"], "value": [300.0, 100.0], "invested": [0, 0]})
-    a = an.allocation(b, {"Gold": 200, "Crypto": 200}).set_index("bucket")
-    assert a.loc["Gold", "actual_pct"] == 75 and a.loc["Gold", "target_pct"] == 50
-    assert a.loc["Gold", "gap"] == -100 and a.loc["Crypto", "gap"] == 100
+    a = an.allocation(b, {"Gold": 20, "Crypto": 50}, income=1000).set_index("bucket")
+    assert a.loc["Gold", "target"] == 200 and a.loc["Crypto", "target"] == 500
+    assert a.loc["Gold", "actual_pct"] == 30 and a.loc["Gold", "gap"] == -100 and a.loc["Crypto", "gap"] == 400
+    assert an.allocation(b, {"Gold": 20}, income=0)["target"].sum() == 0
+
+
+def test_usd_holding_uses_trade_fx_for_cost_and_live_fx_for_value():
+    s = pd.DataFrame([{"id": 1, "name": "AAPL", "symbol": "AAPL", "category": "International - Stable",
+                       "reason": "", "current_price": 200.0, "currency": "USD"}])
+    t = pd.DataFrame([{"id": 1, "security_id": 1, "date": "2025-01-01", "side": "Buy", "qty": 10, "price": 100.0,
+                       "fees": 10.0, "fx_rate": 80.0},
+                      {"id": 2, "security_id": 1, "date": "2025-06-01", "side": "Buy", "qty": 10, "price": 150.0,
+                       "fees": 0.0, "fx_rate": None}])
+    d = pd.DataFrame(columns=["id", "security_id", "date", "amount"])
+    pos, _, _ = an.build_positions(s, t, d, usd_inr=90.0)
+    r = pos.iloc[0]
+    assert r.invested == pytest.approx(1010 * 80 + 1500 * 90)      # 2nd trade has no rate -> today's
+    assert r.avg_price == pytest.approx(2510 / 20)                  # native USD
+    assert r.value == pytest.approx(20 * 200 * 90)                  # live rate
+    assert r.pnl == pytest.approx(r.value - r.invested)
+
+
+def test_usd_sale_realises_inr_gain_including_fx():
+    s = pd.DataFrame([{"id": 1, "name": "X", "symbol": "", "category": "ETFs", "reason": "", "current_price": 1.0,
+                       "currency": "USD"}])
+    t = pd.DataFrame([{"id": 1, "security_id": 1, "date": "2025-01-01", "side": "Buy", "qty": 10, "price": 100.0,
+                       "fees": 0.0, "fx_rate": 80.0},
+                      {"id": 2, "security_id": 1, "date": "2025-02-01", "side": "Sell", "qty": 10, "price": 100.0,
+                       "fees": 0.0, "fx_rate": 90.0}])
+    d = pd.DataFrame(columns=["id", "security_id", "date", "amount"])
+    _, realised, _ = an.build_positions(s, t, d, usd_inr=90.0)
+    assert realised.iloc[0].pnl == pytest.approx(10 * 100 * 10) and realised.iloc[0].cost_sold == 80000
+
+
+def test_money_flow_expense_is_income_minus_investments_and_savings():
+    sec = pd.DataFrame([{"id": 1, "currency": "INR"}])
+    tr = pd.DataFrame([
+        {"id": 1, "security_id": 1, "date": "2025-01-01", "side": "Buy", "qty": 10, "price": 100.0, "fees": 0.0},
+        {"id": 2, "security_id": 1, "date": "2025-03-01", "side": "Sell", "qty": 4, "price": 150.0, "fees": 0.0}])
+    realised = pd.DataFrame([{"date": "2025-03-01", "security_id": 1, "pnl": 200.0, "cost_sold": 400.0}])
+    flow = an.stock_net_invested(tr, sec, realised, 0)
+    assert flow[2025] == 1000 - 400 and flow["all"] == 600
+    metals = pd.DataFrame({"date": [date(2025, 5, 1), date(2024, 5, 1)], "invested": [100.0, 50.0]})
+    re_ = pd.DataFrame({"purchase_date": [date(2025, 7, 1)], "total_cost": [1000.0]})
+    sv = pd.DataFrame({"amount": [300.0, 200.0], "start_date": [date(2025, 2, 1), None]})
+    y = an.money_flow(5000, flow, metals, re_, sv, 2025)
+    assert y["invested"] == 600 + 100 + 1000 and y["saved"] == 300 and y["expense"] == 5000 - 1700 - 300
+    allt = an.money_flow(5000, flow, metals, re_, sv, None)
+    assert allt["invested"] == 600 + 150 + 1000 and allt["saved"] == 500
 
 
 def test_sync_table_add_update_delete(path):
@@ -139,8 +185,8 @@ def test_sync_keeps_row_when_required_value_cleared(path):
 def test_flags_roundtrip_and_targets(path):
     db.insert("insurance", {"name": "Term", "premium": 1, "frequency": "Yearly", "active": True}, path)
     assert db.get_table("insurance", path)["active"].iloc[0] in (True, False)
-    db.set_targets({"Gold": 100, "Crypto": 0}, path)
-    assert db.get_targets(path) == {"Gold": 100.0}
+    db.set_target_pcts({"Gold": 25, "Crypto": 0, "ETFs": 500}, path)
+    assert db.get_target_pcts(path) == {"Gold": 25.0, "ETFs": 100.0}
 
 
 def test_loans_markdown_and_security_cascade(path):
@@ -156,3 +202,41 @@ def test_loans_markdown_and_security_cascade(path):
     orig = db.get_table("securities", path)
     db.sync_table("securities", orig, orig.iloc[0:0], path=path)
     assert db.get_table("trades", path).empty and db.get_table("dividends", path).empty
+
+
+def test_migration_adds_columns_to_old_database(path):
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        old = os.path.join(d, "old.db")
+        c = sqlite3.connect(old)
+        c.executescript("CREATE TABLE securities (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, symbol TEXT, "
+                        "category TEXT NOT NULL, reason TEXT, current_price REAL, price_date TEXT);"
+                        "CREATE TABLE trades (id INTEGER PRIMARY KEY, security_id INTEGER NOT NULL, date TEXT NOT NULL,"
+                        " side TEXT NOT NULL, qty REAL NOT NULL, price REAL NOT NULL, fees REAL, note TEXT);"
+                        "INSERT INTO securities(name, category) VALUES ('A','ETFs');")
+        c.commit(); c.close()
+        db.init_db(old)
+        db.init_db(old)  # idempotent
+        assert db.get_table("securities", old).iloc[0]["currency"] in ("INR", None)
+        assert "fx_rate" in db.get_table("trades", old).columns
+
+
+def test_usd_inr_manual_override(path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", path)
+    db.meta_set("fx_usdinr", 88.5)
+    assert db.usd_inr() == 88.5
+    db.meta_set("fx_manual", 90)
+    db.meta_set("fx_use_manual", "1")
+    assert db.usd_inr() == 90
+
+
+def test_blank_fees_and_currency_do_not_poison_numbers():
+    s = pd.DataFrame([{"id": 1, "name": "U", "symbol": None, "category": "Unlisted Stocks", "reason": None,
+                       "current_price": 12.0, "currency": None}])
+    t = pd.DataFrame([{"id": 1, "security_id": 1, "date": "2025-01-01", "side": "Buy", "qty": 10, "price": 10.0,
+                       "fees": None, "fx_rate": None}])
+    d = pd.DataFrame(columns=["id", "security_id", "date", "amount"])
+    pos, _, _ = an.build_positions(s, t, d, usd_inr=88.0)
+    r = pos.iloc[0]
+    assert r.invested == 100 and r.value == 120 and r.currency == "INR"
+    assert an.stock_net_invested(t, s, pos.iloc[0:0].assign(date=[], cost_sold=[]), 88.0)["all"] == 100

@@ -27,7 +27,7 @@ def main(out, reset):
     d = first
     while d <= today:
         ins("income", {"date": d.replace(day=28) if d.month != 2 else d.replace(day=27), "source": "Salary",
-                       "description": "Acme Corp salary", "amount": 150000})
+                       "description": "Acme Corp salary", "amount": 400000})
         if d.month in (3, 9):
             ins("income", {"date": d.replace(day=15), "source": "Dividend/FD", "description": "FD interest",
                            "amount": random.randint(6000, 9000)})
@@ -44,18 +44,21 @@ def main(out, reset):
             ("Nifty 50 Index Fund", "Index Funds", "Core, low cost", 900, 140, 168),
             ("Parag Parikh Flexi Cap", "Mutual Funds", "Global diversification", 700, 60, 78),
             ("Gold BeES", "ETFs", "Liquid gold exposure", 500, 50, 62),
-            ("Apple Inc", "International - Stable", "Cash machine", 20, 11000, 15500),
-            ("Tesla", "International - Risky", "High-conviction speculation", 5, 18000, 21000),
+            ("Apple Inc", "International - Stable", "Cash machine", 20, 130, 190),
+            ("Tesla", "International - Risky", "High-conviction speculation", 5, 220, 250),
             ("Embassy REIT", "REITs/InvITs", "Rental income", 300, 350, 385),
             ("Bitcoin", "Crypto", "Small asymmetric bet", 0.05, 4500000, 7400000)]
     for name, cat, why, qty, buy, now in secs:
-        sid = ins("securities", {"name": name, "category": cat, "reason": why, "current_price": now,
-                                 "price_date": today})
+        usd = cat.startswith("International")
+        sym = {"Apple Inc": "AAPL", "Tesla": "TSLA", "Reliance Industries": "RELIANCE.NS",
+               "HDFC Bank": "HDFCBANK.NS", "Bitcoin": "BTC-INR"}.get(name, "")
+        sid = ins("securities", {"name": name, "symbol": sym, "category": cat, "reason": why, "current_price": now,
+                                 "price_date": today, "currency": "USD" if usd else "INR"})
         half = qty / 2
         ins("trades", {"security_id": sid, "date": today - timedelta(days=300), "side": "Buy", "qty": half,
-                       "price": buy * 0.95, "fees": 40})
+                       "price": buy * 0.95, "fees": 40, "fx_rate": 83.0 if usd else None})
         ins("trades", {"security_id": sid, "date": today - timedelta(days=120), "side": "Buy", "qty": half,
-                       "price": buy * 1.05, "fees": 40})
+                       "price": buy * 1.05, "fees": 40, "fx_rate": 86.0 if usd else None})
         if cat in ("India - High Quality", "REITs/InvITs", "International - Stable"):
             for k in (200, 100):
                 ins("dividends", {"security_id": sid, "date": today - timedelta(days=k),
@@ -97,6 +100,7 @@ def main(out, reset):
                        "grams": g, "rate_per_g": rate, "making_charges": mk, "gst": gst, "purity": "999"})
     db.meta_set("price_gold", 7600, out)
     db.meta_set("price_silver", 98, out)
+    db.meta_set("fx_usdinr", 88.0, out)
 
     ins("real_estate", {"name": "2BHK Whitefield", "kind": "Flat", "location": "Bengaluru",
                         "purchase_date": date(2023, 4, 1), "cost": 6000000, "area_sqft": 1100,
@@ -107,10 +111,9 @@ def main(out, reset):
                   "done": False, "created": str(today), "updated": str(today)})
     ins("notes", {"title": "Idea: sovereign gold bonds", "body": "Check next tranche.", "kind": "Idea",
                   "done": False, "created": str(today), "updated": str(today)})
-    db.set_targets({"India - High Quality": 600000, "India - Risky": 100000, "Index Funds": 250000,
-                    "Mutual Funds": 150000, "ETFs": 80000, "International - Stable": 250000,
-                    "International - Risky": 50000, "REITs/InvITs": 150000, "Crypto": 150000, "Gold": 200000,
-                    "Silver": 20000, "Real Estate": 7000000}, out)
+    db.set_target_pcts({"India - High Quality": 8, "India - Risky": 1, "Index Funds": 4, "Mutual Funds": 3, "ETFs": 1,
+                        "International - Stable": 4, "International - Risky": 1, "REITs/InvITs": 2, "Crypto": 2,
+                        "Gold": 3, "Silver": 0.5, "Real Estate": 10, "Cash & Savings": 15}, out)
     print("Demo database written to", out)
 
 
