@@ -347,3 +347,90 @@ def test_closed_loan_with_actuals_reconciles():
     assert r["asset_cost"] == 423000
     assert r["total_paid"] - r["asset_cost"] == r["cost_of_borrowing"] == 29043 + 11179
     assert r["interest_saved"] > 0 and r["net_saved"] == r["interest_saved"] - 11179
+
+
+# ---------------------------------------------------------------- loan calculations, one worked case end to end
+KTM = {"id": 1, "name": "KTM", "lender": "BF", "link": None, "details": None, "category": "Bad",
+       "principal": 273000.0, "outstanding": 0.0, "interest_rate": 16.5, "emi": 6734.0,
+       "start_date": date(2023, 11, 30), "end_date": date(2028, 11, 30), "status": "Closed",
+       "closed_date": date(2024, 9, 30), "down_payment": 150000.0, "other_charges": 11179.0,
+       "installments_paid": 8, "emi_paid": 7 * 6734 + 7618, "emi_interest": 29043.0, "closing_payment": 258466.0}
+
+
+def _amortise(P, annual, emi, k):
+    bal, interest = P, 0.0
+    for _ in range(k):
+        i = bal * annual / 1200
+        interest += i
+        bal -= emi - i
+    return interest, bal
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    (date(2023, 11, 30), date(2024, 9, 30), 10),     # same day number
+    (date(2024, 1, 15), date(2024, 2, 14), 0),       # a day short of a month
+    (date(2024, 1, 15), date(2024, 2, 15), 1),
+    (date(2024, 1, 31), date(2024, 2, 29), 1),       # month-end to shorter month-end completes the month
+    (date(2024, 1, 30), date(2024, 3, 29), 1),       # 29 Mar is not a month-end, so only one full month
+    (date(2023, 11, 30), date(2028, 11, 30), 60),
+    (date(2024, 5, 1), date(2024, 4, 1), 0),         # never negative
+    (None, date(2024, 1, 1), None)])
+def test_whole_months(a, b, expected):
+    assert an.whole_months(a, b) == expected
+
+
+def test_emi_matches_the_standard_formula_and_an_amortisation_table():
+    P, rate, n = 273000, 16.5, 60
+    s = an.emi_schedule(P, rate, n, 8)
+    i = rate / 1200
+    assert s["emi"] == pytest.approx(P * i * (1 + i) ** n / ((1 + i) ** n - 1))
+    assert s["emi"] == pytest.approx(6711.57, abs=0.01)
+    interest, bal = _amortise(P, rate, s["emi"], 8)
+    assert s["balance_cleared"] == pytest.approx(bal, abs=0.01)
+    assert s["interest_paid"] == pytest.approx(interest + 0, abs=0.01)         # no charges inside this figure
+    assert s["interest_full"] == pytest.approx(s["emi"] * n - P)
+    full_i, full_bal = _amortise(P, rate, s["emi"], n)
+    assert full_bal == pytest.approx(0, abs=0.01) and full_i == pytest.approx(s["interest_full"], abs=0.01)
+
+
+def test_ktm_loan_every_figure():
+    r = an.loans_frame(pd.DataFrame([KTM])).iloc[0]
+    assert r["tenure_months"] == 8 and r["elapsed_months"] == 10 and r["planned_months"] == 60
+    assert r["outstanding"] == 0 and r["emi"] == 0 and r["repaid_pct"] == 100
+    assert r["asset_cost"] == 423000
+    assert r["emi_principal"] == 25713
+    assert r["balance_cleared"] == 247287                     # 273,000 - 25,713
+    assert r["closing_gap"] == 0                              # 247,287 + 11,179 = 258,466
+    assert r["interest_paid"] == 29043 and r["cost_of_borrowing"] == 40222
+    assert r["total_paid"] == 463222 and r["total_paid"] - r["asset_cost"] == r["cost_of_borrowing"]
+    assert r["interest_full"] == pytest.approx(129694.46, abs=0.01)
+    assert r["interest_saved"] == pytest.approx(129694.46 - 29043, abs=0.01)
+    assert r["net_saved"] == pytest.approx(r["interest_saved"] - 11179, abs=0.01)
+    # the calculator's estimate for the same 8 instalments lands within 1% of what was really paid
+    assert r["interest_est"] == pytest.approx(29043, rel=0.01)
+    assert r["balance_est"] == pytest.approx(247287, rel=0.01)
+
+
+def test_tenure_falls_back_to_dates_without_instalments_and_markdown_reports_it():
+    k = dict(KTM, installments_paid=None, emi_paid=None, emi_interest=None, closing_payment=None)
+    r = an.loans_frame(pd.DataFrame([k])).iloc[0]
+    assert r["tenure_months"] == 10 and pd.isna(r["interest_paid"]) is False   # estimated from the calculator
+    md = an.loans_markdown(pd.DataFrame([KTM]))
+    assert "Tenure: 8" in md and "40,222" in md
+
+
+def test_active_loan_is_untouched_by_closing_maths():
+    a = dict(KTM, status="Active", closed_date=None, outstanding=150000.0, installments_paid=None, emi_paid=None,
+             emi_interest=None, closing_payment=None, down_payment=None, other_charges=None)
+    r = an.loans_frame(pd.DataFrame([a])).iloc[0]
+    assert r["outstanding"] == 150000 and r["emi"] == 6734 and pd.isna(r["interest_saved"])
+    assert pd.isna(r["balance_cleared"]) and r["other_charges"] == 0
+
+
+def test_unrecorded_repayment_figures_stay_unknown_not_zero():
+    k = dict(KTM, installments_paid=None, emi_paid=None, emi_interest=None, closing_payment=None, down_payment=None,
+             other_charges=None)
+    r = an.loans_frame(pd.DataFrame([k])).iloc[0]
+    assert pd.isna(r["emi_principal"]) and pd.isna(r["total_paid"]) and pd.isna(r["closing_gap"])
+    assert r["balance_cleared"] == pytest.approx(r["balance_est"]) and r["balance_cleared"] > 200000
+    assert r["interest_paid"] == pytest.approx(r["interest_est"]) and r["other_charges"] == 0
