@@ -122,10 +122,14 @@ def build_positions(securities: pd.DataFrame, trades: pd.DataFrame, dividends: p
 
 # ---------------------------------------------------------------- income
 def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.DataFrame, include_auto=True,
-                 premiums: pd.DataFrame | None = None) -> pd.DataFrame:
+                 premiums: pd.DataFrame | None = None, usd_inr: float | None = None) -> pd.DataFrame:
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
     (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
+    if usd_inr and "usd_amount" in income:     # RSUs that have not been sold follow today's USD->INR rate
+        usd = num(income["usd_amount"])
+        live = (income["source"] == db.RSU_SOURCE) & (usd > 0)
+        amount = amount.where(~live, usd * usd_inr)
     amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes reduce the total
     parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
                            "origin": "Source sheet"})]
@@ -640,6 +644,20 @@ def growth_line(net: pd.Series, avg_pct: float | None) -> pd.Series:
     first = pos.index[0]
     for i, k in enumerate([k for k in net.index if k >= first]):
         out[k] = pos.iloc[0] * (1 + avg_pct / 100) ** i
+    return out
+
+
+def rsu_table(income: pd.DataFrame, usd_inr: float | None) -> pd.DataFrame:
+    """RSU vests that are still held in dollars: US$ value, rupees at the vest-day rate, rupees at today's rate and the
+    difference the exchange rate made. Rows without a US$ value are left out."""
+    if "usd_amount" not in income:
+        return pd.DataFrame(columns=["date", "description", "usd", "inr_at_vest", "inr_now", "fx_impact"])
+    r = income[(income["source"] == db.RSU_SOURCE) & (num(income["usd_amount"]) > 0)]
+    usd = num(r["usd_amount"])
+    out = pd.DataFrame({"date": r["date"], "description": r["description"], "usd": usd,
+                        "inr_at_vest": num(r["amount"])})
+    out["inr_now"] = usd * usd_inr if usd_inr else float("nan")
+    out["fx_impact"] = out["inr_now"] - out["inr_at_vest"]
     return out
 
 
