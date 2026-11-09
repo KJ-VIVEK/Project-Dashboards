@@ -14,13 +14,13 @@ st.set_page_config(page_title="Asset Tracker", page_icon=":material/account_bala
 
 MUTED = "#898781"
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-SOURCE_COLORS = {"Salary": "#2a78d6", "Dividend/FD": "#1baf7a", "PL Booking": "#eda100", "Miscellaneous": "#6250d6",
+SOURCE_COLORS = {"Salary": "#2a78d6", "RSU Vested": "#0b5cad", "Dividend/FD": "#1baf7a", "PL Booking": "#eda100", "Miscellaneous": "#6250d6",
                  "Taxes Paid": "#d6403a", "Insurance Premium": "#c2185b"}
 LOAN_COLORS = {"Good": "#1baf7a", "Bad": "#eda100", "Worst": "#d6403a"}
 BUCKET_COLORS = ["#2a78d6", "#6aa7ea", "#1baf7a", "#74d1ac", "#eda100", "#f3c85c", "#6250d6", "#a396ea",
                  "#eb6834", "#d6403a", "#c9a227", "#9aa0a6", "#8c5a3c"]
 IDEAL, REAL = "#898781", "#2a78d6"
-MEMO_ROW = "EPF / NPS / returned (not in Total)"
+MEMO_ROW = "EPF / NPS (not in Total)"
 
 
 # ------------------------------------------------------------------ helpers
@@ -436,16 +436,56 @@ with tabs[1]:
 
     yo = an.inflow_by_year(inc)
     if len(yo) > 1:
-        st.markdown("##### Cash inflow, year on year")
+        st.markdown("##### Income growth, year on year")
+        avg = an.average_growth(yo["yoy_pct"])
+        trend = an.growth_line(yo.set_index("year")["net"], avg)
         fig = go.Figure()
-        fig.add_bar(x=yo["year"], y=yo["gross"], name="Before tax", marker_color=IDEAL)
-        fig.add_bar(x=yo["year"], y=yo["net"], name="After tax", marker_color=REAL,
-                    text=[("" if pd.isna(v) else f"{v:+.0f}%") for v in yo["yoy_pct"]], textposition="outside",
-                    customdata=yo["yoy_pct"].fillna(0), hovertemplate="%{x}: ₹%{y:,.0f}<br>vs last year: %{customdata:+.1f}%")
+        fig.add_scatter(x=yo["year"], y=yo["net"], name="Income after tax", mode="lines+markers+text",
+                        line=dict(color=REAL, width=3), marker=dict(size=8),
+                        text=[("" if pd.isna(v) else f"{v:+.0f}%") for v in yo["yoy_pct"]], textposition="top center",
+                        customdata=yo["yoy_pct"].fillna(0),
+                        hovertemplate="%{x}: ₹%{y:,.0f}<br>vs last year: %{customdata:+.1f}%<extra></extra>")
+        if avg is not None:
+            fig.add_scatter(x=yo["year"], y=trend.values, name=f"Average growth ({avg:+.1f}% a year)", mode="lines",
+                            line=dict(color=IDEAL, width=2, dash="dash"),
+                            hovertemplate="%{x}: ₹%{y:,.0f} at the average growth<extra></extra>")
         fig.update_xaxes(type="category")
         fig.update_yaxes(tickprefix="₹", tickformat="~s")
-        fig.update_layout(barmode="group")
-        show(style(fig, "Inflow per year (the % is the change in after-tax inflow from the year before)", height=320))
+        show(style(fig, "Income after tax per year; the % on each point is its change from the year before", height=340))
+        if avg is not None:
+            st.caption(f"Average year-on-year growth: **{avg:+.1f}%** (the mean of the yearly changes). The dashed line is "
+                       "where income would be if it had grown by exactly that each year from the first year.")
+
+    with st.expander("RSUs vested and USD → ₹ calculator", icon=":material/currency_exchange:"):
+        st.caption("Enter the RSUs that vested at their **buy value** (the share price on the vest day). The rupee value "
+                   "is worked out live and saved as an **RSU Vested** inflow. Leave units at 0 to use it as a plain "
+                   "USD → ₹ calculator.")
+        rc = st.columns(4, vertical_alignment="bottom")
+        r_units = rc[0].number_input("Units vested", min_value=0.0, step=1.0, format="%.4f", key="rsu_units")
+        r_price = rc[1].number_input("Buy value per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_price")
+        r_fx = rc[2].number_input("USD → ₹ rate", min_value=0.0, value=float(fx or 0.0), step=0.1, format="%.4f",
+                                  key="rsu_fx", help="Defaults to today's rate. Use the rate on the vest day if you know it.")
+        r_usd = rc[3].number_input("Or a US$ amount", min_value=0.0, step=100.0, format="%.2f", key="rsu_usd",
+                                   help="Used when units are 0: converts this dollar amount at the rate.")
+        rsu = an.rsu_value(r_units, r_price, r_fx) if r_units > 0 else {"usd": r_usd, "inr": r_usd * r_fx}
+        m = st.columns(3)
+        kpi(m[0], "Value in US$", f"${rsu['usd']:,.2f}")
+        kpi(m[1], "Value in ₹", rsu["inr"])
+        m[2].caption(f"{r_units:g} × ${r_price:,.2f} × ₹{r_fx:,.2f}" if r_units > 0 else f"${r_usd:,.2f} × ₹{r_fx:,.2f}")
+        sc = st.columns([1, 1.2, 1, 0.8], vertical_alignment="bottom")
+        r_date = dinput(sc[0], "Vest date", date.today(), key="rsu_date")
+        r_note = sc[1].text_input("Description", placeholder="e.g. Intel RSU, Q3 vest", key="rsu_note")
+        r_tax = sc[2].number_input("Taxes paid on it (₹)", min_value=0.0, step=1000.0, format="%.2f", key="rsu_tax",
+                                   help="Optional. Tax withheld on this vest, subtracted like any other tax.")
+        if sc[3].button("Add as RSU Vested", type="primary", width="stretch", key="rsu_add"):
+            if r_units <= 0 or r_price <= 0 or r_fx <= 0:
+                st.error("Enter units, a buy value per share and a USD → ₹ rate, all above zero.")
+            else:
+                label = f"{r_note.strip() + ': ' if r_note.strip() else ''}{r_units:g} units × ${r_price:,.2f} × ₹{r_fx:,.2f}"
+                db.insert("income", {"date": r_date, "source": db.RSU_SOURCE, "description": label,
+                                     "amount": round(rsu["inr"], 2), "tax_paid": r_tax or None})
+                flash("RSU vest added.")
+                st.rerun()
 
     st.markdown("**Edit entries**")
     f1, f2, f3 = st.columns(3)

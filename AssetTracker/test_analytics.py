@@ -821,3 +821,32 @@ def test_memo_row_shows_epf_nps_per_month_and_year_without_touching_totals():
     assert y[2025] == 75 and y.get(2026, 0) == 0
     d, r = _empty_auto()
     assert _source_total_row(an.income_frame(inc, d, r), 2025).loc["Total", "Total"] == 1500 - 100
+
+
+def test_rsu_value_is_units_times_buy_value_times_rate():
+    v = an.rsu_value(10, 25.5, 83.2)
+    assert v["usd"] == 255 and round(v["inr"], 2) == 21216.0
+    assert an.rsu_value(0, 25.5, 83.2) == {"usd": 0.0, "inr": 0.0}
+    assert an.rsu_value(None, None, None)["inr"] == 0.0
+
+
+def test_average_growth_and_trend_line():
+    net = pd.Series({2022: 100.0, 2023: 110.0, 2024: 132.0})
+    yoy = pd.Series([float("nan"), 10.0, 20.0])
+    assert an.average_growth(yoy) == 15.0
+    assert an.average_growth(pd.Series([float("nan")])) is None
+    t = an.growth_line(net, 15.0)
+    assert t[2022] == 100 and round(t[2023], 6) == 115 and round(t[2024], 6) == 132.25
+    # years before the first positive year are blank, and no average gives no line
+    t2 = an.growth_line(pd.Series({2021: 0.0, 2022: 200.0, 2023: 100.0}), 10.0)
+    assert pd.isna(t2[2021]) and t2[2022] == 200 and round(t2[2023], 6) == 220
+    assert an.growth_line(net, None).isna().all()
+
+
+def test_rsu_vested_is_an_income_source_counted_in_totals():
+    inc = _src([[date(2025, 5, 1), "RSU Vested", "Intel RSU", 21216.0, 6000.0, None]])
+    d, r = _empty_auto()
+    pv = _source_total_row(an.income_frame(inc, d, r), 2025)
+    assert pv.loc["RSU Vested", "Total"] == 21216 and pv.loc["Total", "Total"] == 21216 - 6000
+    assert not val.validate("income", pd.DataFrame({"id": [1], "date": [date(2025, 5, 1)], "source": ["RSU Vested"],
+                                                    "amount": [21216.0]}))
