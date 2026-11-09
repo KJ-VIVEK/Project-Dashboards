@@ -93,7 +93,7 @@ def main(out, reset):
     ins("loans", {"name": "Credit card dues", "lender": "Axis", "category": "Worst", "outstanding": 30000,
                   "interest_rate": 42.0})
     ins("loans", {"name": "Personal loan (prepaid)", "lender": "HDFC", "category": "Worst", "principal": 200000,
-                  "outstanding": 0, "interest_rate": 14.5, "start_date": "2024-02-01", "status": "Closed",
+                  "outstanding": 0, "interest_rate": 14.5, "start_date": "2024-02-01", "end_date": "2026-02-01", "status": "Closed",
                   "closed_date": "2024-11-15"})
 
     for metal, form, desc, g, rate, mk, gst in [("Gold", "Coin", "10 g coin (24K)", 10, 6200, 300, 1900),

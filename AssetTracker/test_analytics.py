@@ -311,3 +311,23 @@ def test_closed_loan_owes_nothing_and_has_tenure():
     assert f.loc[0, "tenure_months"] == 9
     assert f.loc[1, "status"] == "Active" and f.loc[1, "outstanding"] == 8e5 and f.loc[1, "tenure_months"] == 120
     assert "Closed" in an.loans_markdown(l) and "9 months" in an.loans_markdown(l)
+
+
+def test_emi_schedule_interest_saved():
+    r = an.emi_schedule(1_000_000, 12, 12, 12)          # known: EMI 88,848.79 for 1L @12% x12 -> 1M principal
+    assert round(r["emi"], 2) == 88848.79
+    assert round(r["interest_full"], 0) == round(88848.79 * 12 - 1_000_000, 0)
+    assert r["interest_saved"] == pytest.approx(0, abs=1e-6) and r["balance_cleared"] == pytest.approx(0, abs=1e-6)
+    early = an.emi_schedule(1_000_000, 12, 12, 6)       # closed after 6 of 12 EMIs
+    assert early["interest_paid"] < early["interest_full"] and early["interest_saved"] > 0
+    # first 6 months of interest + nothing else: balance after 6 EMIs matches the amortisation table
+    bal = 1_000_000
+    interest = 0
+    for _ in range(6):
+        i = bal * 0.01
+        interest += i
+        bal -= 88848.79 - i
+    assert early["balance_cleared"] == pytest.approx(bal, abs=1)
+    assert early["interest_paid"] == pytest.approx(interest, abs=1)
+    assert an.emi_schedule(1e6, 0, 10, 4)["interest_full"] == 0
+    assert an.emi_schedule(None, 12, 12, 6) is None
