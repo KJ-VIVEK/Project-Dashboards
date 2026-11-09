@@ -121,6 +121,19 @@ def build_positions(securities: pd.DataFrame, trades: pd.DataFrame, dividends: p
 
 
 # ---------------------------------------------------------------- income
+def extra_tax_rows(income: pd.DataFrame, default_pct: float = 0.0) -> pd.Series:
+    """Extra tax to be paid on each Source row (rupees, positive = tax due; 0 where none applies).
+
+    Only Dividend/FD, PL Booking and Miscellaneous rows can carry it. The rate is the % typed on the row (tax_pct); a row
+    with no % uses the default % only when no tax has been entered on it (tax_paid empty or 0)."""
+    amt = num(income["amount"])
+    row_pct = num(income["tax_pct"]) if "tax_pct" in income else amt * 0
+    has_row_pct = pd.to_numeric(income["tax_pct"], errors="coerce").notna() if "tax_pct" in income else amt.notna() & False
+    taxed = num(income["tax_paid"]).abs() > 0 if "tax_paid" in income else amt.notna() & False
+    pct = row_pct.where(has_row_pct, pd.Series(float(default_pct or 0.0), index=income.index).where(~taxed, 0.0))
+    return (amt * pct / 100).where(income["source"].isin(db.EXTRA_TAX_BASE), 0.0)
+
+
 def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.DataFrame, include_auto=True,
                  premiums: pd.DataFrame | None = None, usd_inr: float | None = None, extra_tax_pct: float = 0.0) -> pd.DataFrame:
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
@@ -159,7 +172,18 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
         keep = ded.abs() > 0
         parts.append(pd.DataFrame({"date": income["date"][keep], "source": db.TAX_SOURCE, "amount": -ded[keep].abs(),
                                    "origin": "Source sheet"}))
+    due = extra_tax_rows(income, extra_tax_pct)     # extra tax to be paid, charged on the row's own date
+    if (due.abs() > 0).any():
+        keep = due.abs() > 0
+        parts.append(pd.DataFrame({"date": income["date"][keep], "source": db.EXTRA_TAX_SOURCE, "amount": -due[keep],
+                                   "origin": "Extra tax"}))
     if include_auto:
+        if extra_tax_pct:       # dividends and sale profit from the Stocks tab have no tax entered: the default % applies
+            for frame, col in ((dividends, "amount"), (realised, "pnl")):
+                x = num(frame[col]) if len(frame) else pd.Series(dtype=float)
+                if len(x):
+                    parts.append(pd.DataFrame({"date": frame["date"], "source": db.EXTRA_TAX_SOURCE,
+                                               "amount": -x * extra_tax_pct / 100, "origin": "Extra tax"}))
         parts.append(pd.DataFrame({"date": dividends["date"], "source": "Dividend/FD",
                                    "amount": num(dividends["amount"]), "origin": "Stocks (dividend)"}))
         parts.append(pd.DataFrame({"date": realised["date"], "source": "PL Booking", "amount": realised["pnl"],
@@ -169,12 +193,6 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
                                    "amount": -num(premiums["amount"]).abs(), "origin": "Insurance"}))
     df = pd.concat([p for p in parts if len(p)], ignore_index=True) if any(len(p) for p in parts) else \
         pd.DataFrame(columns=["date", "source", "amount", "origin"])
-    if extra_tax_pct:   # extra tax: a % of the Dividend/FD + PL Booking + Miscellaneous total, subtracted as its own line
-        base = df[df["source"].isin(db.EXTRA_TAX_BASE)]
-        if len(base):
-            df = pd.concat([df, pd.DataFrame({"date": base["date"], "source": db.EXTRA_TAX_SOURCE,
-                                              "amount": -base["amount"] * extra_tax_pct / 100,
-                                              "origin": "Extra tax"})], ignore_index=True)
     dt = pd.to_datetime(df["date"], errors="coerce")
     df["year"] = dt.dt.year
     df["month"] = dt.dt.month

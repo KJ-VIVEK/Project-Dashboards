@@ -393,7 +393,7 @@ with tabs[1]:
         d_ = dinput(c[0], "Date", date.today())
         s_ = c[1].selectbox("Source", [x for x in db.INCOME_SOURCES if x not in db.DEDUCTION_SOURCES])
         desc = c[2].text_input("Description", placeholder="e.g. Employer name, FD interest, Swing trade")
-        c = st.columns([1, 1, 1, 0.8], vertical_alignment="bottom")
+        c = st.columns([1, 1, 1, 1, 0.8], vertical_alignment="bottom")
         amt = c[0].number_input("Amount (₹)", step=1000.0, format="%.2f",
                                 help="Negative for a loss or money lost, e.g. an FD closed early.")
         tax = c[1].number_input("Taxes paid (₹)", min_value=0.0, step=500.0, format="%.2f",
@@ -401,13 +401,17 @@ with tabs[1]:
         oth = c[2].number_input("EPF or NPS or Vouchers or Insurance (₹)", min_value=0.0, step=500.0, format="%.2f",
                                 help="Taken off this inflow but still yours: EPF, NPS, vouchers, insurance. "
                                      "Only recorded, not subtracted from income.")
-        if c[3].form_submit_button("Add", width="stretch", type="primary"):
+        tpct = c[3].number_input("Extra tax (%)", min_value=0.0, max_value=100.0, step=1.0, format="%.2f",
+                                 help="For Dividend/FD, PL Booking and Miscellaneous: the % to charge on this entry. "
+                                      "Leave 0 to use the default % set below (only if no tax is entered here).")
+        if c[4].form_submit_button("Add", width="stretch", type="primary"):
             if amt == 0:
                 st.error("Enter the amount, positive for money received or negative for a loss. Taxes and deductions "
                          "belong to that inflow.")
             else:
                 db.insert("income", {"date": d_, "source": s_, "description": desc.strip(), "amount": amt,
-                                     "tax_paid": tax or None, "other_deductions": oth or None})
+                                     "tax_paid": tax or None, "other_deductions": oth or None,
+                                     "tax_pct": tpct if (tpct and s_ in db.EXTRA_TAX_BASE) else None})
                 flash("Entry added.")
                 st.rerun()
 
@@ -416,8 +420,9 @@ with tabs[1]:
                           extra_tax_pct=extra_pct)
     st.number_input("Extra tax to be paid (%)", min_value=0.0, max_value=100.0, value=extra_pct, step=1.0, format="%.2f",
                     key="extra_tax_pct_in", on_change=lambda: db.meta_set("extra_tax_pct", st.session_state["extra_tax_pct_in"]),
-                    help="Applied to the total of Dividend/FD, PL Booking and Miscellaneous, and subtracted from the final "
-                         "value as its own line (“Extra tax to be paid”). 0 switches it off. It also applies on the Summary.")
+                    help="Default % for Dividend/FD, PL Booking and Miscellaneous entries that have no tax entered and no % of "
+                         "their own. Subtracted from the final value as its own line (“Extra tax to be paid”). 0 switches "
+                         "the default off. A % typed on an entry always applies. Also used on the Summary.")
     view = st.radio("View", ["Per month", "Per year"], horizontal=True, key="src_view")
     if view == "Per month":
         ys = sorted(inc["year"].unique(), reverse=True) or [date.today().year]
@@ -444,7 +449,8 @@ with tabs[1]:
     kpi(k[0], "Income after tax" + (f" ({yr})" if view == "Per month" else " (all years)"), float(pv.loc["Total", "Total"]))
     kpi(k[1], "Taxes paid", float(-pv.loc[db.TAX_SOURCE, "Total"]))
     kpi(k[2], "Extra tax to be paid", float(-pv.loc[db.EXTRA_TAX_SOURCE, "Total"]),
-        help=f"{extra_pct:g}% of Dividend/FD + PL Booking + Miscellaneous, subtracted from the Total.")
+        help="Dividend/FD, PL Booking and Miscellaneous entries, at the % on each entry (or the default % when no tax "
+             "is entered), subtracted from the Total.")
     kpi(k[3], "EPF or NPS or Vouchers or Insurance", float(an.num(income.loc[in_period, "other_deductions"]).sum()),
         help="Recorded only. It is still your money, so it is not subtracted from income.")
 
@@ -587,13 +593,25 @@ with tabs[1]:
     if fs:
         mask &= income["source"].isin(fs)
     sub = income[mask]
-    edit_table("income", sub, sub, {
+    # tax to be paid on each row, shown next to the % (read-only: it is worked out from the saved amount and %)
+    cols_ = list(sub.columns)
+    shown_inc = sub.assign(tax_due=an.extra_tax_rows(sub, extra_pct).where(lambda s: s != 0))
+    cols_.insert(cols_.index("tax_pct") + 1, "tax_due")
+    shown_inc = shown_inc[cols_]
+    st.caption("**Extra tax (%)** is the % to charge on a Dividend/FD, PL Booking or Miscellaneous entry; **Extra tax to be "
+               "paid (₹)** shows the result (amount × %). Type a % on entries whose tax shows 0. An entry with no % uses the "
+               f"default ({extra_pct:g}%) only when no tax is entered on it. Press Save changes to refresh the column.")
+    edit_table("income", shown_inc, sub, {
         "date": dcol("Date", required=True),
         "source": st.column_config.SelectboxColumn("Section", options=db.INCOME_SOURCES, required=True),
         "description": "Description",
         "amount": st.column_config.NumberColumn("Amount (₹)", format="%.2f", required=True,
                                                 help="Negative for a loss, e.g. an FD closed early."),
         "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
+        "tax_pct": st.column_config.NumberColumn("Extra tax (%)", min_value=0, max_value=100, format="%.2f",
+                                                  help="Dividend/FD, PL Booking, Miscellaneous: % to charge on this entry."),
+        "tax_due": st.column_config.NumberColumn("Extra tax to be paid (₹)", format="%.2f", disabled=True,
+                                                  help="Amount × the % (or the default % when this entry has no tax)."),
         "rsu_qty": st.column_config.NumberColumn("RSU shares vested", min_value=0, format="%.4f",
                                                   help="RSU Vested rows. With the buy price, the totals use these instead "
                                                        "of the Amount: kept shares at today's USD→₹ rate."),

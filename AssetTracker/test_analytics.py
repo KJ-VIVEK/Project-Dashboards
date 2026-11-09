@@ -164,9 +164,9 @@ def test_sync_table_add_update_delete(path):
     ed = orig.copy()
     ed = ed.iloc[1:].reset_index(drop=True)            # delete row 1
     ed.loc[0, "amount"] = 25.0                          # update row 2
-    ed.loc[len(ed)] = [None, date(2025, 2, 1), "Misc", "gift", 5.0, None, None, None, None, None, None, None, None]       # add
-    ed.loc[len(ed)] = [None, None, None, None, None, None, None, None, None, None, None, None, None]                      # blank: ignored
-    ed.loc[len(ed)] = [None, date(2025, 3, 1), "Salary", None, None, None, None, None, None, None, None, None, None]      # no amount: skipped
+    ed.loc[len(ed)] = [None, date(2025, 2, 1), "Misc", "gift", 5.0, None, None, None, None, None, None, None, None, None]       # add
+    ed.loc[len(ed)] = [None, None, None, None, None, None, None, None, None, None, None, None, None, None]                      # blank: ignored
+    ed.loc[len(ed)] = [None, date(2025, 3, 1), "Salary", None, None, None, None, None, None, None, None, None, None, None]      # no amount: skipped
     stats = db.sync_table("income", orig, ed, required=("date", "source", "amount"), path=path)
     assert stats == {"added": 1, "updated": 1, "deleted": 1, "skipped": 1}
     now = db.get_table("income", path)
@@ -947,3 +947,28 @@ def test_extra_tax_is_a_percentage_of_fd_dividend_pl_and_misc_subtracted_from_th
     assert "Extra tax to be paid" not in set(an.income_frame(inc, d, r)["source"])        # 0% adds nothing
     yo = an.inflow_by_year(df).set_index("year")
     assert round(yo.loc[2025, "tax"], 6) == 100 + 300             # tax paid + extra tax count as tax in the chart
+
+
+def test_extra_tax_per_row_percentage_and_the_tax_to_be_paid_column():
+    inc = _src([[date(2025, 1, 1), "Dividend/FD", "no tax yet", 1000.0, None, None],      # default % applies
+                [date(2025, 1, 2), "Dividend/FD", "already taxed", 1000.0, 100.0, None],  # tax entered: default skipped
+                [date(2025, 1, 3), "PL Booking", "own %", 2000.0, None, None],            # its own 10%
+                [date(2025, 1, 4), "Dividend/FD", "taxed and own %", 1000.0, 100.0, None],  # own % always applies
+                [date(2025, 1, 5), "Salary", "pay", 5000.0, None, None]])                 # never carries extra tax
+    inc["tax_pct"] = [None, None, 10.0, 5.0, 25.0]
+    due = an.extra_tax_rows(inc, 30.0)
+    assert list(due.round(6)) == [300.0, 0.0, 200.0, 50.0, 0.0]
+    d, r = _empty_auto()
+    df = an.income_frame(inc, d, r, extra_tax_pct=30.0)
+    assert round(-df.loc[df["source"] == "Extra tax to be paid", "amount"].sum(), 6) == 550
+    assert round(df["amount"].sum(), 6) == (1000 + 1000 + 2000 + 1000 + 5000) - 200 - 550
+    assert an.extra_tax_rows(inc, 0.0).tolist() == [0.0, 0.0, 200.0, 50.0, 0.0]            # no default: only typed %s
+    assert val.validate("income", inc.assign(id=1, tax_pct=[None, None, None, 120.0, None]))
+
+
+def test_default_extra_tax_also_applies_to_stock_dividends_and_sale_profit():
+    inc = _src([[date(2025, 1, 5), "Salary", "pay", 1000.0, None, None]])
+    div = pd.DataFrame({"date": [date(2025, 2, 1)], "amount": [100.0]})
+    sold = pd.DataFrame({"date": [date(2025, 3, 1)], "pnl": [200.0]})
+    df = an.income_frame(inc, div, sold, extra_tax_pct=10.0)
+    assert round(-df.loc[df["source"] == "Extra tax to be paid", "amount"].sum(), 6) == 30
