@@ -7,6 +7,7 @@ import streamlit as st
 
 import analytics as an
 import db
+import validation
 import market
 
 st.set_page_config(page_title="Asset Tracker", page_icon=":material/account_balance:", layout="wide")
@@ -83,12 +84,17 @@ def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None)
     c1, c2 = st.columns([1, 5], vertical_alignment="center")
     if c1.button("Save changes", key=f"save_{key}", type="primary"):
         edited = to_db(ed) if to_db else ed
-        removed = set(orig["id"].astype(int)) - set(pd.to_numeric(edited["id"]).dropna().astype(int))
-        if removed:
-            db.backup()  # safety copy before anything is deleted
-        flash(saved_msg(db.sync_table(table, orig, edited, required)))
-        bump(key)
-        st.rerun()
+        problems = validation.validate(table, edited, required)
+        if problems:        # say exactly what is wrong; nothing is saved and the editor keeps what was typed
+            st.error("**Nothing was saved.** Fix these and press Save changes again:\n\n"
+                     + "\n".join(f"- {p}" for p in problems), icon=":material/error:")
+        else:
+            removed = set(orig["id"].astype(int)) - set(pd.to_numeric(edited["id"]).dropna().astype(int))
+            if removed:
+                db.backup()  # safety copy before anything is deleted
+            flash(saved_msg(db.sync_table(table, orig, edited, required)))
+            bump(key)
+            st.rerun()
     c2.caption(hint or "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes.")
 
 
