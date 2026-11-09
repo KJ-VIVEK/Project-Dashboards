@@ -337,7 +337,7 @@ def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, ye
     now, rows = _ym(today), []
     for idx, row in i.iterrows():
         sch = _policy_schedule(row, by_policy.get(int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1, []))
-        if not bool(row["active"]) or (sch["last"] is not None and now > sch["last"]):
+        if not bool(row["active"]) or (sch["end"] is not None and sch["end"] < today):   # real dates, not months
             status = "Inactive"
         elif sch["start"] is not None and sch["start"] > today:
             status = "Not started"
