@@ -375,8 +375,8 @@ with tabs[0]:
 
 # ================================================================== 2. SOURCE (income)
 with tabs[1]:
-    st.caption("Everything you earn, by month. Enter **Taxes Paid** and **Other Deductions** (PF, professional tax, anything else taken "
-               "off) as positive amounts: they are subtracted from the totals, so income shown is after deductions. Dividends and realised profit/loss from the Stocks tab "
+    st.caption("Everything you earn, by month. Each entry carries its own **Taxes paid** and **Other deductions** (PF, professional tax…), "
+               "entered as positive amounts and subtracted from the totals, so income shown is after deductions. Dividends and realised profit/loss from the Stocks tab "
                "appear in the tables below automatically (switch this off on the Summary tab).")
     with st.form("add_income", clear_on_submit=True, border=False):
         c = st.columns([1, 1.2, 2], vertical_alignment="bottom")
@@ -386,18 +386,15 @@ with tabs[1]:
         c = st.columns([1, 1, 1, 0.8], vertical_alignment="bottom")
         amt = c[0].number_input("Amount (₹)", min_value=0.0, step=1000.0, format="%.2f")
         tax = c[1].number_input("Taxes paid (₹)", min_value=0.0, step=500.0, format="%.2f",
-                                help="Deducted on this date. Saved as a Taxes Paid row.")
+                                help="Taken off this inflow. Kept on the same entry.")
         oth = c[2].number_input("Other deductions (₹)", min_value=0.0, step=500.0, format="%.2f",
                                 help="PF, professional tax, anything else taken off on this date.")
         if c[3].form_submit_button("Add", width="stretch", type="primary"):
-            if amt <= 0 and tax <= 0 and oth <= 0:
-                st.error("Enter an amount, taxes or deductions above zero.")
+            if amt <= 0:
+                st.error("Enter the amount received, above zero. Taxes and deductions belong to that inflow.")
             else:
-                note = desc.strip()
-                for src, val, text in ((s_, amt, note), (db.TAX_SOURCE, tax, f"Tax: {note}" if note else "Tax"),
-                                       (db.OTHER_DEDUCTION_SOURCE, oth, f"Deduction: {note}" if note else "Deduction")):
-                    if val > 0:
-                        db.insert("income", {"date": d_, "source": src, "description": text, "amount": val})
+                db.insert("income", {"date": d_, "source": s_, "description": desc.strip(), "amount": amt,
+                                     "tax_paid": tax or None, "other_deductions": oth or None})
                 flash("Entry added.")
                 st.rerun()
 
@@ -434,7 +431,9 @@ with tabs[1]:
     edit_table("income", sub, sub, {
         "date": dcol("Date", required=True),
         "source": st.column_config.SelectboxColumn("Section", options=db.INCOME_SOURCES, required=True),
-        "description": "Description", "amount": money_cfg("Amount (₹)", required=True)},
+        "description": "Description", "amount": money_cfg("Amount (₹)", required=True),
+        "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
+        "other_deductions": money_cfg("Other deductions (₹)", help="PF, professional tax… deducted from this inflow.")},
         ("date", "source", "amount"), "income")
 
 # ================================================================== 3. CASH & SAVINGS

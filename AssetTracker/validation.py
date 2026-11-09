@@ -26,13 +26,13 @@ LABELS = {
     "gst": "GST", "cost": "Cost", "area_sqft": "Area", "registration": "Registration", "brokerage": "Brokerage",
     "monthly_rent": "Rent per month", "current_per_sqft": "Current price per sq ft", "purchase_date": "Purchased on",
     "maturity_date": "Maturity date", "target": "Goal target", "title": "Title", "description": "Description",
-    "price_date": "Price as of",
+    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "Other deductions",
 }
 
 # column -> rule for each table. Rules: (">", 0) must be above 0, (">=", 0) not negative, ("between", lo, hi),
 # ("in", options), ("int",) whole number
 RULES: dict[str, dict[str, tuple]] = {
-    "income": {"source": ("in", db.INCOME_SOURCES)},
+    "income": {"source": ("in", db.INCOME_SOURCES), "tax_paid": (">=", 0), "other_deductions": (">=", 0)},
     "savings": {"kind": ("in", db.SAVINGS_KINDS), "amount": (">=", 0), "interest_rate": ("between", 0, 100),
                 "target": (">=", 0)},
     "insurance": {"premium": (">", 0), "sum_assured": (">=", 0), "frequency": ("in", db.FREQUENCY_OPTIONS),
