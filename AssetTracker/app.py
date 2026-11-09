@@ -22,6 +22,22 @@ IDEAL, REAL = "#898781", "#2a78d6"
 
 
 # ------------------------------------------------------------------ helpers
+DATE_MIN, DATE_MAX = date(1950, 1, 1), date(2100, 12, 31)   # Streamlit's default window is only +/-10 years
+
+
+def dinput(label, *args, **kw):
+    """Date picker that allows long horizons (a 40-50 year policy or loan) and old start dates."""
+    kw.setdefault("min_value", DATE_MIN)
+    kw.setdefault("max_value", DATE_MAX)
+    return st.date_input(label, *args, **kw)
+
+
+def dcol(label, **kw):
+    kw.setdefault("min_value", DATE_MIN)
+    kw.setdefault("max_value", DATE_MAX)
+    return st.column_config.DateColumn(label, **kw)
+
+
 def style(fig, title, height=340, money=True):
     legend_rows = 1 if len(fig.data) > 1 else 0   # the legend sits between the title and the plot, never on the axis
     fig.update_layout(title=dict(text=title, font=dict(size=14)), height=height,
@@ -365,7 +381,7 @@ with tabs[1]:
         mask &= income["source"].isin(fs)
     sub = income[mask]
     edit_table("income", sub, sub, {
-        "date": st.column_config.DateColumn("Date", required=True),
+        "date": dcol("Date", required=True),
         "source": st.column_config.SelectboxColumn("Section", options=db.INCOME_SOURCES, required=True),
         "description": "Description", "amount": money_cfg("Amount (₹)", required=True)},
         ("date", "source", "amount"), "income")
@@ -420,8 +436,8 @@ with tabs[2]:
         "name": st.column_config.TextColumn("Name", required=True),
         "amount": money_cfg("Amount (₹)", required=True), "purpose": "Meant for",
         "interest_rate": st.column_config.NumberColumn("Interest %", min_value=0, format="%.2f"),
-        "start_date": st.column_config.DateColumn("Start"),
-        "maturity_date": st.column_config.DateColumn("Maturity / target"),
+        "start_date": dcol("Start"),
+        "maturity_date": dcol("Maturity / target"),
         "target": money_cfg("Goal target (₹)"), "note": "Note"}, ("kind", "name", "amount"), "savings")
 
 # ================================================================== 4. INSURANCE
@@ -528,7 +544,7 @@ with tabs[3]:
             names_all = dict(zip(insurance["id"], insurance["name"]))
             edit_table("insurance_revisions", ins_rev.assign(policy=ins_rev["insurance_id"].map(names_all)), ins_rev, {
                 "insurance_id": None, "policy": st.column_config.TextColumn("Policy", disabled=True),
-                "effective_from": st.column_config.DateColumn("Effective from", required=True),
+                "effective_from": dcol("Effective from", required=True),
                 "premium": money_cfg("Premium (₹)", required=True), "note": "Reason"},
                 ("effective_from", "premium"), "ins_rev", to_db=lambda e: e.drop(columns="policy"),
                 hint="Edit cells, or tick a row's left edge and press Delete; then Save changes.")
@@ -556,8 +572,8 @@ with tabs[3]:
             "provider": "Provider", "policy_no": "Policy no.", "sum_assured": money_cfg("Sum assured (₹)"),
             "premium": money_cfg("Starting premium (₹)", required=True),
             "frequency": st.column_config.SelectboxColumn("Paid", options=list(db.FREQUENCIES), required=True),
-            "next_due": st.column_config.DateColumn("Next due"),
-            "start_date": st.column_config.DateColumn("Start"), "end_date": st.column_config.DateColumn("End"),
+            "next_due": dcol("Next due"),
+            "start_date": dcol("Start"), "end_date": dcol("End"),
             "link": st.column_config.LinkColumn("Policy link", display_text="Open"), "notes": "Notes",
             "active": st.column_config.CheckboxColumn("Active")}, ("name", "premium", "frequency"), "insurance",
             hint="Untick Active when a policy lapses and add an end date. To change what you pay, use "
@@ -778,9 +794,9 @@ with tabs[4]:
             "down_payment": money_cfg("Down payment (₹)"), "principal": money_cfg("Loan amount (₹)"),
             "other_charges": money_cfg("Other charges (₹)"), "outstanding": money_cfg("Outstanding (₹)"),
             "interest_rate": st.column_config.NumberColumn("Interest %", min_value=0, format="%.2f"),
-            "emi": money_cfg("EMI (₹)"), "start_date": st.column_config.DateColumn("Started"),
-            "end_date": st.column_config.DateColumn("Planned end"),
-            "closed_date": st.column_config.DateColumn("Closed on"),
+            "emi": money_cfg("EMI (₹)"), "start_date": dcol("Started"),
+            "end_date": dcol("Planned end"),
+            "closed_date": dcol("Closed on"),
             "installments_paid": st.column_config.NumberColumn("Installments paid", min_value=0, step=1, format="%d"),
             "emi_paid": money_cfg("Paid via installments (₹)"), "emi_interest": money_cfg("…interest in them (₹)"),
             "closing_payment": money_cfg("Paid to close (₹)"),
@@ -833,7 +849,7 @@ with tabs[5]:
             p = st.number_input("Buy price (in that currency)", min_value=0.0, format="%.2f")
             fe = st.number_input("Fees / brokerage (in that currency)", min_value=0.0, format="%.2f")
             fxr = st.number_input("USD→INR rate at purchase (USD only)", min_value=0.0, value=float(fx), format="%.4f")
-            dt_ = st.date_input("Bought on", date.today())
+            dt_ = dinput("Bought on", date.today())
             if st.form_submit_button("Add holding", type="primary"):
                 if not nm.strip():
                     st.error("Name required.")
@@ -855,7 +871,7 @@ with tabs[5]:
             with st.form("add_trade", clear_on_submit=True):
                 who = st.selectbox("Holding", names)
                 side = st.radio("Side", ["Buy", "Sell"], horizontal=True)
-                dt_ = st.date_input("Date", date.today())
+                dt_ = dinput("Date", date.today())
                 q = st.number_input("Quantity", min_value=0.0, format="%.4f")
                 p = st.number_input("Price per unit (in the holding's currency)", min_value=0.0, format="%.2f")
                 fe = st.number_input("Fees / brokerage / taxes (same currency)", min_value=0.0, format="%.2f")
@@ -881,7 +897,7 @@ with tabs[5]:
         else:
             with st.form("add_div", clear_on_submit=True):
                 who = st.selectbox("Holding", names, key="div_who")
-                dt_ = st.date_input("Received on", date.today(), key="div_date")
+                dt_ = dinput("Received on", date.today(), key="div_date")
                 amt = st.number_input("Amount received (₹)", min_value=0.0, format="%.2f",
                                       help="In rupees, as credited to your bank.")
                 nt = st.text_input("Note", key="div_note")
@@ -906,10 +922,10 @@ with tabs[5]:
                   "current_price", "price_date", "value", "pnl", "pnl_pct", "weight_pct", "dividends", "last_dividend", "realised", "reason"]]
         st.dataframe(t, hide_index=True, width="stretch", column_config={
             "name": "Holding", "category": "Category", "currency": "Ccy",
-            "price_date": st.column_config.DateColumn("Price as of"), "qty": st.column_config.NumberColumn("Units", format="%.4g"),
+            "price_date": dcol("Price as of"), "qty": st.column_config.NumberColumn("Units", format="%.4g"),
             "avg_price": st.column_config.NumberColumn("Avg buy price", format="%.2f", help="In the holding's own currency"),
-            "first_buy": st.column_config.DateColumn("First bought"),
-            "last_buy": st.column_config.DateColumn("Last bought"),
+            "first_buy": dcol("First bought"),
+            "last_buy": dcol("Last bought"),
             "invested": st.column_config.NumberColumn("Invested (₹)", format="₹%.0f"),
             "current_price": st.column_config.NumberColumn("Price now", format="%.2f", help="In the holding's own currency"),
             "value": st.column_config.NumberColumn("Current value (₹)", format="₹%.0f"),
@@ -917,7 +933,7 @@ with tabs[5]:
             "pnl_pct": st.column_config.NumberColumn("P/L %", format="%.1f%%"),
             "weight_pct": st.column_config.ProgressColumn("% of portfolio", format="%.1f%%", min_value=0, max_value=100),
             "dividends": st.column_config.NumberColumn("Dividends", format="₹%.0f"),
-            "last_dividend": st.column_config.DateColumn("Last dividend"),
+            "last_dividend": dcol("Last dividend"),
             "realised": st.column_config.NumberColumn("Realised P/L", format="₹%.0f"),
             "reason": st.column_config.TextColumn("Why I hold it", width="large")})
 
@@ -970,7 +986,7 @@ with tabs[5]:
                 "category": st.column_config.SelectboxColumn("Category", options=db.SECURITY_CATEGORIES, required=True),
                 "reason": st.column_config.TextColumn("Why I hold it", width="large"),
                 "current_price": st.column_config.NumberColumn("Price now (own currency)", min_value=0, format="%.2f"),
-                "price_date": st.column_config.DateColumn("Price as of")}, ("name", "category", "currency"), "securities",
+                "price_date": dcol("Price as of")}, ("name", "category", "currency"), "securities",
                 to_db=stamp_price)
         with e2:
             tshow = trades.assign(security=trades["security_id"].map(id2name)).drop(columns=["security_id"])
@@ -982,7 +998,7 @@ with tabs[5]:
                 return df.drop(columns=["security"])
             edit_table("trades", tshow, trades, {
                 "security": st.column_config.SelectboxColumn("Holding", options=names, required=True),
-                "date": st.column_config.DateColumn("Date", required=True),
+                "date": dcol("Date", required=True),
                 "side": st.column_config.SelectboxColumn("Side", options=["Buy", "Sell"], required=True),
                 "qty": st.column_config.NumberColumn("Units", min_value=0, format="%.4f", required=True),
                 "price": money_cfg("Price (own currency)", required=True), "fees": money_cfg("Fees (own currency)"),
@@ -1000,7 +1016,7 @@ with tabs[5]:
                 return df.drop(columns=["security"])
             edit_table("dividends", dshow, dividends, {
                 "security": st.column_config.SelectboxColumn("Holding", options=names, required=True),
-                "date": st.column_config.DateColumn("Received on", required=True),
+                "date": dcol("Received on", required=True),
                 "amount": money_cfg("Amount (₹)", required=True), "note": "Note"},
                 ("security_id", "date", "amount"), "dividends", to_db=to_db_d)
 
@@ -1111,7 +1127,7 @@ with tabs[6]:
                       "invested", "current_price", "value", "pnl", "pnl_pct"]]
         st.dataframe(t, hide_index=True, width="stretch", column_config={
             "metal": "Metal", "purity": "Karat / purity", "description": "Description",
-            "date": st.column_config.DateColumn("Bought on"),
+            "date": dcol("Bought on"),
             "grams": st.column_config.NumberColumn("Grams", format="%.3f"),
             "metal_cost": st.column_config.NumberColumn("Metal cost", format="₹%.0f"),
             "charges": st.column_config.NumberColumn("Charges + GST", format="₹%.0f"),
@@ -1130,7 +1146,7 @@ with tabs[6]:
             "metal": st.column_config.SelectboxColumn("Metal", options=db.METALS, required=True),
             "form": st.column_config.SelectboxColumn("Form", options=FORMS),
             "purity": st.column_config.SelectboxColumn("Karat / purity", options=purity_opts),
-            "description": "Description", "date": st.column_config.DateColumn("Bought on"),
+            "description": "Description", "date": dcol("Bought on"),
             "grams": st.column_config.NumberColumn("Grams", min_value=0, format="%.3f", required=True),
             "rate_per_g": money_cfg("Rate paid (₹/g)", required=True), "making_charges": money_cfg("Making (₹)"),
             "gst": money_cfg("GST (₹)"), "other_charges": money_cfg("Other (₹)"), "note": "Note"},
@@ -1220,7 +1236,7 @@ with tabs[7]:
         edit_table("real_estate", real_estate, real_estate, {
             "name": st.column_config.TextColumn("Property", required=True),
             "kind": st.column_config.SelectboxColumn("Type", options=RE_KINDS),
-            "location": "Location", "purchase_date": st.column_config.DateColumn("Purchased on"),
+            "location": "Location", "purchase_date": dcol("Purchased on"),
             "cost": money_cfg("Cost (₹)", required=True), "area_sqft": st.column_config.NumberColumn("Sq ft", min_value=0),
             "registration": money_cfg("Registration + stamp (₹)"), "brokerage": money_cfg("Brokerage (₹)"),
             "other_charges": money_cfg("Other charges (₹)"),
