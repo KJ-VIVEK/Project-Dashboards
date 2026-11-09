@@ -264,7 +264,7 @@ with tabs[0]:
     prem_on = st.toggle("Subtract insurance premiums paid (from the Insurance tab)", value=True, key="sum_prem",
                         help="Each premium is subtracted in the month you paid it (a yearly premium whole, on its start "
                              "date and each anniversary; a monthly one every month), like Taxes Paid.")
-    inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None)
+    inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None, usd_inr=fx)
     years = sorted(inc["year"].unique(), reverse=True)
     period = st.selectbox("Period", ["All time"] + years, key="sum_year",
                           help="Drives the income chart, 'where the income went' and the ideal values below.")
@@ -405,7 +405,7 @@ with tabs[1]:
                 st.rerun()
 
     # insurance premiums are their own section (Insurance tab); only the Summary subtracts them
-    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True))
+    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True), usd_inr=fx)
     view = st.radio("View", ["Per month", "Per year"], horizontal=True, key="src_view")
     if view == "Per month":
         ys = sorted(inc["year"].unique(), reverse=True) or [date.today().year]
@@ -457,14 +457,17 @@ with tabs[1]:
                        "where income would be if it had grown by exactly that each year from the first year.")
 
     with st.expander("RSUs vested and USD → ₹ calculator", icon=":material/currency_exchange:"):
-        st.caption("Enter the RSUs that vested at their **buy value** (the share price on the vest day). The rupee value "
-                   "is worked out live and saved as an **RSU Vested** inflow. Leave units at 0 to use it as a plain "
-                   "USD → ₹ calculator.")
+        st.caption("Enter the RSUs that vested at their **buy value** (the share price on the vest day). They have not "
+                   "been sold, so they are still dollars: the US$ value is saved, and in the Source totals it is valued at "
+                   "**today's USD → ₹ rate**, so the exchange rate moves it. The vest-day rupee value is kept for "
+                   "reference. Leave units at 0 to use this as a plain USD → ₹ calculator.")
         rc = st.columns(4, vertical_alignment="bottom")
         r_units = rc[0].number_input("Units vested", min_value=0.0, step=1.0, format="%.4f", key="rsu_units")
         r_price = rc[1].number_input("Buy value per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_price")
-        r_fx = rc[2].number_input("USD → ₹ rate", min_value=0.0, value=float(fx or 0.0), step=0.1, format="%.4f",
-                                  key="rsu_fx", help="Defaults to today's rate. Use the rate on the vest day if you know it.")
+        r_fx = rc[2].number_input("USD → ₹ rate on the vest day", min_value=0.0, value=float(fx or 0.0), step=0.1,
+                                  format="%.4f", key="rsu_fx",
+                                  help="Defaults to today's rate. Use the rate on the vest day if you know it. It is "
+                                       "kept as the record of what the vest was worth in ₹ that day.")
         r_usd = rc[3].number_input("Or a US$ amount", min_value=0.0, step=100.0, format="%.2f", key="rsu_usd",
                                    help="Used when units are 0: converts this dollar amount at the rate.")
         rsu = an.rsu_value(r_units, r_price, r_fx) if r_units > 0 else {"usd": r_usd, "inr": r_usd * r_fx}
@@ -483,9 +486,24 @@ with tabs[1]:
             else:
                 label = f"{r_note.strip() + ': ' if r_note.strip() else ''}{r_units:g} units × ${r_price:,.2f} × ₹{r_fx:,.2f}"
                 db.insert("income", {"date": r_date, "source": db.RSU_SOURCE, "description": label,
-                                     "amount": round(rsu["inr"], 2), "tax_paid": r_tax or None})
+                                     "amount": round(rsu["inr"], 2), "usd_amount": round(rsu["usd"], 4),
+                                     "tax_paid": r_tax or None})
                 flash("RSU vest added.")
                 st.rerun()
+        rt = an.rsu_table(income, fx)
+        if not rt.empty:
+            st.markdown("**RSUs held in dollars**")
+            show_rt = pd.DataFrame({"Vest date": rt["date"], "Description": rt["description"],
+                                    "US$": rt["usd"].map(lambda v: f"${v:,.2f}"),
+                                    "₹ on the vest day": rt["inr_at_vest"].map(an.inr),
+                                    "₹ at today's rate": rt["inr_now"].map(an.inr),
+                                    "Exchange-rate effect": rt["fx_impact"].map(
+                                        lambda v: "–" if pd.isna(v) else ("+" if v >= 0 else "-") + an.inr(v))})
+            st.dataframe(show_rt, hide_index=True, width="stretch")
+            tot = rt["fx_impact"].sum(skipna=True)
+            st.caption(f"The Source totals use the “₹ at today's rate” column"
+                       + (f" (USD/INR {fx:,.2f})" if fx else " (no live rate yet, so the vest-day value is used)")
+                       + f". Exchange-rate effect so far: {'+' if tot >= 0 else '-'}{an.inr(tot)}.")
 
     st.markdown("**Edit entries**")
     f1, f2, f3 = st.columns(3)
@@ -509,6 +527,9 @@ with tabs[1]:
         "amount": st.column_config.NumberColumn("Amount (₹)", format="%.2f", required=True,
                                                 help="Negative for a loss, e.g. an FD closed early."),
         "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
+        "usd_amount": st.column_config.NumberColumn("RSU US$ value", min_value=0, format="%.2f",
+                                                     help="RSU Vested rows only. When filled, the totals use this × today's "
+                                                          "USD→₹ rate instead of the Amount."),
         "other_deductions": money_cfg("EPF / NPS / returned (₹)",
                                       help="Put in EPF/NPS or given back to you. Recorded only, not subtracted.")},
         ("date", "source", "amount"), "income")
