@@ -25,11 +25,11 @@ IDEAL, REAL = "#898781", "#2a78d6"
 DATE_MIN, DATE_MAX = date(1950, 1, 1), date(2100, 12, 31)   # Streamlit's default window is only +/-10 years
 
 
-def dinput(label, *args, **kw):
+def dinput(container, label, *args, **kw):
     """Date picker that allows long horizons (a 40-50 year policy or loan) and old start dates."""
     kw.setdefault("min_value", DATE_MIN)
     kw.setdefault("max_value", DATE_MAX)
-    return st.date_input(label, *args, **kw)
+    return container.date_input(label, *args, **kw)
 
 
 def dcol(label, **kw):
@@ -338,7 +338,7 @@ with tabs[1]:
                "appear in the tables below automatically (switch this off on the Summary tab).")
     with st.form("add_income", clear_on_submit=True):
         c = st.columns([1, 1.2, 2, 1.2, 0.8], vertical_alignment="bottom")
-        d_ = c[0].date_input("Date", date.today())
+        d_ = dinput(c[0], "Date", date.today())
         s_ = c[1].selectbox("Section", db.INCOME_SOURCES)
         desc = c[2].text_input("Description", placeholder="e.g. Employer name, FD interest, Swing trade")
         amt = c[3].number_input("Amount (₹)", min_value=0.0, step=1000.0, format="%.2f")
@@ -409,7 +409,7 @@ with tabs[2]:
         purpose = c[3].text_input("What is it meant for?", placeholder="e.g. House down payment, Emergency")
         c2 = st.columns([1, 1, 1, 1, 1], vertical_alignment="bottom")
         rate = c2[0].number_input("Interest % (optional)", min_value=0.0, step=0.1, format="%.2f")
-        mat = c2[1].date_input("Maturity / target date", value=None)
+        mat = dinput(c2[1], "Maturity / target date", value=None)
         tgt = c2[2].number_input("Goal target ₹ (goals)", min_value=0.0, step=1000.0, format="%.2f")
         if c2[4].form_submit_button("Add", width="stretch", type="primary"):
             if name.strip():
@@ -487,11 +487,11 @@ with tabs[3]:
             prem = c[0].number_input("Premium each time (₹)", min_value=0.0, step=500.0, format="%.2f",
                                      help="The amount you pay per payment, e.g. per month for a monthly policy.")
             freq = c[1].selectbox("Paid", list(db.FREQUENCIES), index=3)
-            nxt = c[2].date_input("Next due", value=None)
+            nxt = dinput(c[2], "Next due", value=None)
             st.markdown("##### Period")
             c = st.columns(3)
-            p_start = c[0].date_input("Start date", value=None)
-            p_end = c[1].date_input("End date", value=None, help="Leave empty while the policy is running.")
+            p_start = dinput(c[0], "Start date", value=None)
+            p_end = dinput(c[1], "End date", value=None, help="Leave empty while the policy is running.")
             st.write("")
             if st.form_submit_button("Add policy", type="primary"):
                 if not name.strip() or prem <= 0:
@@ -517,7 +517,7 @@ with tabs[3]:
                 c = st.columns(4, vertical_alignment="bottom")
                 pid = c[0].selectbox("Policy", list(names), format_func=names.get)
                 new_prem = c[1].number_input("New premium each time (₹)", min_value=0.0, step=500.0, format="%.2f")
-                eff = c[2].date_input("Effective from", value=None)
+                eff = dinput(c[2], "Effective from", value=None)
                 why = c[3].text_input("Reason", placeholder="e.g. GST change")
                 if st.form_submit_button("Record premium change", type="primary"):
                     pol = ins_y[ins_y["id"] == pid].iloc[0]
@@ -631,9 +631,9 @@ with tabs[4]:
                                      help="Leave 0 for a closed loan.")
             st.markdown("##### Dates")
             c = st.columns(3)
-            sd = c[0].date_input("Started", value=None)
-            ed_ = c[1].date_input("Planned end", value=None, help="Original end of the tenure, used for the full-tenure interest.")
-            closed_on = c[2].date_input("Closed on", value=None, help="Only for closed loans.")
+            sd = dinput(c[0], "Started", value=None)
+            ed_ = dinput(c[1], "Planned end", value=None, help="Original end of the tenure, used for the full-tenure interest.")
+            closed_on = dinput(c[2], "Closed on", value=None, help="Only for closed loans.")
             st.markdown("##### What you paid")
             st.caption("Optional, but it replaces the estimates with your real figures.")
             c = st.columns(4)
@@ -849,7 +849,7 @@ with tabs[5]:
             p = st.number_input("Buy price (in that currency)", min_value=0.0, format="%.2f")
             fe = st.number_input("Fees / brokerage (in that currency)", min_value=0.0, format="%.2f")
             fxr = st.number_input("USD→INR rate at purchase (USD only)", min_value=0.0, value=float(fx), format="%.4f")
-            dt_ = dinput("Bought on", date.today())
+            dt_ = dinput(st, "Bought on", date.today())
             if st.form_submit_button("Add holding", type="primary"):
                 if not nm.strip():
                     st.error("Name required.")
@@ -871,7 +871,7 @@ with tabs[5]:
             with st.form("add_trade", clear_on_submit=True):
                 who = st.selectbox("Holding", names)
                 side = st.radio("Side", ["Buy", "Sell"], horizontal=True)
-                dt_ = dinput("Date", date.today())
+                dt_ = dinput(st, "Date", date.today())
                 q = st.number_input("Quantity", min_value=0.0, format="%.4f")
                 p = st.number_input("Price per unit (in the holding's currency)", min_value=0.0, format="%.2f")
                 fe = st.number_input("Fees / brokerage / taxes (same currency)", min_value=0.0, format="%.2f")
@@ -897,7 +897,7 @@ with tabs[5]:
         else:
             with st.form("add_div", clear_on_submit=True):
                 who = st.selectbox("Holding", names, key="div_who")
-                dt_ = dinput("Received on", date.today(), key="div_date")
+                dt_ = dinput(st, "Received on", date.today(), key="div_date")
                 amt = st.number_input("Amount received (₹)", min_value=0.0, format="%.2f",
                                       help="In rupees, as credited to your bank.")
                 nt = st.text_input("Note", key="div_note")
@@ -1102,7 +1102,7 @@ with tabs[6]:
         pur = c[1].selectbox("Karat" if metal == "Gold" else "Purity (fineness)", db.PURITIES[metal],
                              index=db.PURITIES[metal].index(db.DEFAULT_PURITY[metal]),
                              help="Gold in karats (22K = 91.6% pure); silver as fineness (925 = sterling).")
-        dt_ = c[2].date_input("Bought on", date.today())
+        dt_ = dinput(c[2], "Bought on", date.today())
         desc = st.text_input("Description", placeholder="e.g. 10 g Tanishq coin")
         c = st.columns(5)
         gr = c[0].number_input("Grams", min_value=0.0, format="%.3f")
@@ -1177,7 +1177,7 @@ with tabs[7]:
             kind = c[1].selectbox("Type", RE_KINDS)
             loc = c[2].text_input("Location")
             c = st.columns(3)
-            pd_ = c[0].date_input("Purchased on", value=None)
+            pd_ = dinput(c[0], "Purchased on", value=None)
             area = c[1].number_input("Area (sq ft)", min_value=0.0, format="%.0f")
             cur = c[2].number_input("Current price per sq ft (₹)", min_value=0.0, step=100.0, format="%.0f",
                                     help="Current value = this × area")
