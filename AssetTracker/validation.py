@@ -10,7 +10,7 @@ import pandas as pd
 
 import db
 
-DATE_MIN, DATE_MAX = date(1950, 1, 1), date(2100, 12, 31)
+DATE_MIN, DATE_MAX = date(1995, 1, 1), date(2100, 12, 31)
 
 LABELS = {
     "name": "Name", "date": "Date", "source": "Section", "amount": "Amount", "kind": "Type", "category": "Category",
