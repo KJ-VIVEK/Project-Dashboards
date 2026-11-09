@@ -406,6 +406,11 @@ def stock_net_invested(trades: pd.DataFrame, securities: pd.DataFrame, realised:
     return flow
 
 
+def _txt(v) -> str:
+    """Text cell, '' when it is missing (None or NaN)."""
+    return v if isinstance(v, str) else ""
+
+
 def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
     """A read-only, shareable write-up of the loans (hand it to a partner, advisor or family member)."""
     l = loans_frame(loans)
@@ -413,7 +418,7 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
              f"Total EMI per month: {inr(l['emi'].sum())}", ""]
     for _, r in l.iterrows():
         lines += [f"## {r['name']}  ({r['category']} debt)", "",
-                  f"- Lender: {r['lender'] or '–'}",
+                  f"- Lender: {_txt(r['lender']) or '–'}",
                   f"- Principal: {inr(r['principal'])} · Outstanding: {inr(r['outstanding'])} "
                   f"({r['repaid_pct']:.0f}% repaid)",
                   f"- Status: {r['status']}"
@@ -428,9 +433,9 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
                              f"{inr(r['interest_saved'])} by closing early ({inr(r['net_saved'])} after charges)")
         lines += [
                   f"- Start: {r['start_date'] or '–'} · End: {r['end_date'] or '–'}"]
-        if r["link"]:
-            lines.append(f"- Documents: {r['link']}")
-        if r["details"]:
-            lines += ["", str(r["details"])]
+        if _txt(r["link"]):
+            lines.append(f"- Documents: {_txt(r['link'])}")
+        if _txt(r["details"]):
+            lines += ["", _txt(r["details"])]
         lines.append("")
     return "\n".join(lines)
