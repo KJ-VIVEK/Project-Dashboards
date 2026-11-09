@@ -816,67 +816,96 @@ with tabs[6]:
             "pnl_pct": st.column_config.NumberColumn("Gain %", format="%.1f%%")})
 
 # ================================================================== 8. REAL ESTATE
+RE_KINDS = ["Flat", "House", "Plot", "Land", "Commercial", "Other"]
 with tabs[7]:
-    c = st.columns(5)
-    kpi(c[0], "Total paid (incl. charges)", re_f["total_cost"].sum())
-    kpi(c[1], "Extra charges paid", re_f["extra_charges"].sum())
-    kpi(c[2], "Current value", re_f["value"].sum(), help="Current price per sq ft × area. Uses purchase cost until both are filled in")
-    kpi(c[3], "Rent per month", re_f.loc[re_f["rent_yielding"].astype(bool), "monthly_rent"].sum())
-    kpi(c[4], "Gain / loss", re_f["gain"].sum())
-    with st.form("add_re", clear_on_submit=True):
-        c = st.columns([1.6, 1, 1.4, 1.2], vertical_alignment="bottom")
-        nm = c[0].text_input("Property", placeholder="e.g. 2BHK Whitefield")
-        kind = c[1].selectbox("Type", ["Flat", "House", "Plot", "Land", "Commercial", "Other"])
-        loc = c[2].text_input("Location")
-        pd_ = c[3].date_input("Purchased on", value=None)
-        c = st.columns(6, vertical_alignment="bottom")
-        cost = c[0].number_input("Cost of purchase (₹)", min_value=0.0, step=100000.0, format="%.0f")
-        area = c[1].number_input("Area (sq ft)", min_value=0.0, format="%.0f")
-        reg = c[2].number_input("Registration + stamp duty (₹)", min_value=0.0, format="%.0f")
-        brk = c[3].number_input("Brokerage (₹)", min_value=0.0, format="%.0f")
-        oth = c[4].number_input("Other charges (₹)", min_value=0.0, format="%.0f")
-        cur = c[5].number_input("Current price per sq ft (₹)", min_value=0.0, step=100.0, format="%.0f",
-                                help="Current value = this × area")
-        c = st.columns([1, 1, 3], vertical_alignment="bottom")
-        ry = c[0].checkbox("Rent yielding")
-        rent = c[1].number_input("Rent per month (₹)", min_value=0.0, step=1000.0, format="%.0f")
-        if st.form_submit_button("Add property", type="primary"):
-            if nm.strip() and cost > 0:
-                db.insert("real_estate", {"name": nm, "kind": kind, "location": loc, "purchase_date": pd_,
-                                          "cost": cost, "area_sqft": area or None, "registration": reg or None,
-                                          "brokerage": brk or None, "other_charges": oth or None,
-                                          "rent_yielding": ry, "monthly_rent": rent or None,
-                                          "current_per_sqft": cur or None})
-                flash("Property added.")
-                st.rerun()
+    rented = re_f["rent_yielding"].astype(bool)
+    c = st.columns(3)
+    kpi(c[0], "Current value", re_f["value"].sum(),
+        f"{re_f['gain'].sum() / re_f['total_cost'].sum() * 100:+.1f}% vs total paid" if re_f["total_cost"].sum() else None,
+        help="Current price per sq ft × area. Uses purchase cost until both are filled in")
+    kpi(c[1], "Total paid (incl. charges)", re_f["total_cost"].sum())
+    kpi(c[2], "Gain / loss", re_f["gain"].sum())
+    st.write("")
+    c = st.columns(3)
+    kpi(c[0], "Properties", str(len(re_f)))
+    kpi(c[1], "Extra charges paid", re_f["extra_charges"].sum(), help="Registration, stamp duty, brokerage, other")
+    kpi(c[2], "Rent per month", re_f.loc[rented, "monthly_rent"].sum())
+    st.write("")
+
+    with st.expander("Add a property", icon=":material/add_home:", expanded=re_f.empty):
+        with st.form("add_re", clear_on_submit=True, border=False):
+            st.markdown("##### The property")
+            c = st.columns(3)
+            nm = c[0].text_input("Name", placeholder="e.g. 2BHK Whitefield")
+            kind = c[1].selectbox("Type", RE_KINDS)
+            loc = c[2].text_input("Location")
+            c = st.columns(3)
+            pd_ = c[0].date_input("Purchased on", value=None)
+            area = c[1].number_input("Area (sq ft)", min_value=0.0, format="%.0f")
+            cur = c[2].number_input("Current price per sq ft (₹)", min_value=0.0, step=100.0, format="%.0f",
+                                    help="Current value = this × area")
+            st.markdown("##### What you paid")
+            c = st.columns(4)
+            cost = c[0].number_input("Cost of purchase (₹)", min_value=0.0, step=100000.0, format="%.0f")
+            reg = c[1].number_input("Registration + stamp duty (₹)", min_value=0.0, format="%.0f")
+            brk = c[2].number_input("Brokerage (₹)", min_value=0.0, format="%.0f")
+            oth = c[3].number_input("Other charges (₹)", min_value=0.0, format="%.0f")
+            st.markdown("##### Rent")
+            c = st.columns(3, vertical_alignment="bottom")
+            ry = c[0].checkbox("Rent yielding")
+            rent = c[1].number_input("Rent per month (₹)", min_value=0.0, step=1000.0, format="%.0f")
+            st.write("")
+            if st.form_submit_button("Add property", type="primary"):
+                if nm.strip() and cost > 0:
+                    db.insert("real_estate", {"name": nm, "kind": kind, "location": loc, "purchase_date": pd_,
+                                              "cost": cost, "area_sqft": area or None, "registration": reg or None,
+                                              "brokerage": brk or None, "other_charges": oth or None,
+                                              "rent_yielding": ry, "monthly_rent": rent or None,
+                                              "current_per_sqft": cur or None})
+                    flash("Property added.")
+                    st.rerun()
+                else:
+                    st.error("A name and a purchase cost above zero are needed.")
+
+    for _, r in re_f.iterrows():
+        with st.container(border=True):
+            bits = [b for b in (r["kind"], r["location"], f"{r['area_sqft']:,.0f} sq ft" if r["area_sqft"] else None,
+                                f"bought {r['purchase_date']}" if pd.notna(r["purchase_date"]) else None) if b]
+            st.markdown(f"#### {r['name']}")
+            st.caption(" · ".join(bits) or "No details yet")
+            c = st.columns(4)
+            c[0].metric("Cost of purchase", an.inr(r["cost"]), help="Before registration, brokerage and other charges")
+            c[1].metric("Extra charges", an.inr(r["extra_charges"]))
+            c[2].metric("Total paid", an.inr(r["total_cost"]))
+            c[3].metric("Cost per sq ft", an.inr(r["cost_per_sqft"]) if r["cost_per_sqft"] else "–")
+            st.write("")
+            c = st.columns(4)
+            c[0].metric("Value now", an.inr(r["value"]),
+                        f"{r['gain'] / r['total_cost'] * 100:+.1f}%" if r["total_cost"] else None)
+            c[1].metric("Price per sq ft now", an.inr(r["current_per_sqft"]) if r["current_per_sqft"] else "–",
+                        help="Set it in 'Edit or delete properties' below to value by area")
+            c[2].metric("Gain / loss", an.inr(r["gain"]))
+            if r["rent_yielding"]:
+                c[3].metric("Rent per month", an.inr(r["monthly_rent"]), f"{r['rent_yield_pct']:.2f}% yearly yield",
+                            delta_color="off")
             else:
-                st.error("A name and a purchase cost above zero are needed.")
-    edit_table("real_estate", real_estate, real_estate, {
-        "name": st.column_config.TextColumn("Property", required=True),
-        "kind": st.column_config.SelectboxColumn("Type", options=["Flat", "House", "Plot", "Land", "Commercial", "Other"]),
-        "location": "Location", "purchase_date": st.column_config.DateColumn("Purchased on"),
-        "cost": money_cfg("Cost (₹)", required=True), "area_sqft": st.column_config.NumberColumn("Sq ft", min_value=0),
-        "registration": money_cfg("Registration + stamp (₹)"), "brokerage": money_cfg("Brokerage (₹)"),
-        "other_charges": money_cfg("Other charges (₹)"), "rent_yielding": st.column_config.CheckboxColumn("Rent yielding"),
-        "monthly_rent": money_cfg("Rent / month (₹)"), "current_per_sqft": money_cfg("Price / sq ft now (₹)"),
-        "note": "Note"}, ("name", "cost"), "real_estate")
-    if not re_f.empty:
-        st.markdown("**Numbers per property**")
-        t = re_f[["name", "location", "area_sqft", "cost", "cost_per_sqft", "current_per_sqft", "extra_charges", "total_cost", "value", "gain",
-                  "rent_yielding", "monthly_rent", "rent_yield_pct"]]
-        st.dataframe(t, hide_index=True, width="stretch", column_config={
-            "name": "Property", "location": "Location",
-            "area_sqft": st.column_config.NumberColumn("Sq ft", format="%.0f"),
-            "current_per_sqft": st.column_config.NumberColumn("Price / sq ft now", format="₹%.0f"),
-            "cost": st.column_config.NumberColumn("Cost", format="₹%.0f"),
-            "cost_per_sqft": st.column_config.NumberColumn("Cost / sq ft", format="₹%.0f"),
-            "extra_charges": st.column_config.NumberColumn("Extra charges", format="₹%.0f"),
-            "total_cost": st.column_config.NumberColumn("Total paid", format="₹%.0f"),
-            "value": st.column_config.NumberColumn("Value now", format="₹%.0f"),
-            "gain": st.column_config.NumberColumn("Gain / loss", format="₹%.0f"),
+                c[3].metric("Rent per month", "Not rented")
+            if r["note"]:
+                st.caption(r["note"])
+    if re_f.empty:
+        st.info("No properties yet. Use Add a property above.")
+
+    with st.expander("Edit or delete properties", icon=":material/edit:"):
+        edit_table("real_estate", real_estate, real_estate, {
+            "name": st.column_config.TextColumn("Property", required=True),
+            "kind": st.column_config.SelectboxColumn("Type", options=RE_KINDS),
+            "location": "Location", "purchase_date": st.column_config.DateColumn("Purchased on"),
+            "cost": money_cfg("Cost (₹)", required=True), "area_sqft": st.column_config.NumberColumn("Sq ft", min_value=0),
+            "registration": money_cfg("Registration + stamp (₹)"), "brokerage": money_cfg("Brokerage (₹)"),
+            "other_charges": money_cfg("Other charges (₹)"),
             "rent_yielding": st.column_config.CheckboxColumn("Rent yielding"),
-            "monthly_rent": st.column_config.NumberColumn("Rent / month", format="₹%.0f"),
-            "rent_yield_pct": st.column_config.NumberColumn("Rental yield", format="%.2f%%")})
+            "monthly_rent": money_cfg("Rent / month (₹)"), "current_per_sqft": money_cfg("Price / sq ft now (₹)"),
+            "note": "Note"}, ("name", "cost"), "real_estate")
 
 # ================================================================== 9. NOTES
 with tabs[8]:
