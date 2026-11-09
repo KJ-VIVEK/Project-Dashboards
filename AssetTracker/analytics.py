@@ -154,14 +154,38 @@ def income_pivot(df: pd.DataFrame, year: int | None, by="month") -> pd.DataFrame
 
 
 # ---------------------------------------------------------------- gold / silver / property
+def purity_factor(metal: str, purity) -> float:
+    """Share of the reference price (24K gold / 999 silver) that a purity is worth.
+
+    '22K' -> 22/24; '916', '925', '99.9%' -> fineness / 999. Blank or unreadable -> 1.0 (treated as pure).
+    """
+    p = str(purity or "").strip().upper().replace(" ", "")
+    if not p or p in ("NAN", "NONE"):
+        return 1.0
+    try:
+        if p.endswith("K"):
+            return min(float(p[:-1]) / 24, 1.0) if metal == "Gold" else 1.0
+        if p.endswith("%"):
+            frac = float(p[:-1]) / 100
+        else:
+            v = float(p)
+            frac = v / 1000 if v > 1 else v
+        return min(frac / 0.999, 1.0) if 0 < frac <= 1 else 1.0
+    except ValueError:
+        return 1.0
+
+
 def metals_frame(metals: pd.DataFrame, prices: dict[str, float]) -> pd.DataFrame:
+    """Per-purchase numbers. `prices` are per gram for pure metal (24K gold / 999 silver); a holding's current price
+    is that scaled by its purity (22K gold is worth 22/24 of the 24K price)."""
     m = metals.copy()
     for c in ("grams", "rate_per_g", "making_charges", "gst", "other_charges"):
         m[c] = num(m[c])
     m["metal_cost"] = m["grams"] * m["rate_per_g"]
     m["charges"] = m["making_charges"] + m["gst"] + m["other_charges"]
     m["invested"] = m["metal_cost"] + m["charges"]
-    m["current_price"] = m["metal"].map(prices).fillna(0.0)
+    m["purity_factor"] = [purity_factor(a, b) for a, b in zip(m["metal"], m.get("purity", [None] * len(m)))]
+    m["current_price"] = m["metal"].map(prices).fillna(0.0) * m["purity_factor"]
     m["value"] = m["grams"] * m["current_price"]
     m["pnl"] = m["value"] - m["invested"]
     m["pnl_pct"] = (m["pnl"] / m["invested"].where(m["invested"] > 0)).fillna(0.0) * 100

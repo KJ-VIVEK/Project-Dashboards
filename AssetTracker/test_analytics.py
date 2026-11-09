@@ -274,3 +274,24 @@ def test_migration_converts_total_current_value_to_per_sqft():
         c.commit(); c.close()
         db.init_db(old)
         assert db.get_table("real_estate", old).iloc[0]["current_per_sqft"] == 6900
+
+
+def test_purity_factor():
+    f = an.purity_factor
+    assert f("Gold", "24K") == 1 and f("Gold", "22K") == pytest.approx(22 / 24) and f("Gold", "18K") == 0.75
+    assert f("Gold", "916") == pytest.approx(0.916 / 0.999) and f("Silver", "925") == pytest.approx(0.925 / 0.999)
+    assert f("Silver", "999") == 1 and f("Silver", "99.9%") == 1 and f("Silver", "99.99%") == 1
+    assert f("Gold", None) == 1 and f("Gold", "junk") == 1 and f("Silver", "22K") == 1
+
+
+def test_value_is_scaled_by_karat():
+    m = pd.DataFrame({"metal": ["Gold", "Gold"], "purity": ["24K", "22K"], "grams": [10, 10],
+                      "rate_per_g": [100, 100], "making_charges": [0, 0], "gst": [0, 0], "other_charges": [0, 0]})
+    f = an.metals_frame(m, {"Gold": 240.0})
+    assert list(f.value) == [2400, pytest.approx(2200)] and f.current_price[1] == pytest.approx(220)
+
+
+def test_metal_premium_defaults_to_india_duty_until_set(path):
+    assert db.metal_premium("Gold", path) == 6.0
+    db.meta_set("premium_gold", 0, path)
+    assert db.metal_premium("Gold", path) == 0.0

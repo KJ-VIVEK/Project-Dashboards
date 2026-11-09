@@ -78,8 +78,10 @@ def test_refresh_is_throttled_offline_aware_and_failure_safe(path, monkeypatch):
 def test_metals_follow_live_price_with_premium_unless_switched_off(path, monkeypatch):
     fake(monkeypatch, {}, metals={"Gold": 7000.0, "Silver": 90.0})
     db.meta_set("premium_gold", 10, path)
+    db.meta_set("premium_silver", 0, path)
     market.refresh(path, force=True)
     assert db.metal_prices(path) == {"Gold": 7700.0, "Silver": 90.0}
+    assert db.meta_get("spot_gold", None, path) == "7000.0"
     db.meta_set("metal_auto", "0", path)
     fake(monkeypatch, {}, metals={"Gold": 1.0})
     market.refresh(path, force=True)

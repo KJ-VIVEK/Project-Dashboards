@@ -22,6 +22,10 @@ SECURITY_CATEGORIES = [
     "International - Stable", "International - Risky", "REITs/InvITs", "Unlisted Stocks", "Crypto",
 ]
 METALS = ["Gold", "Silver"]
+PURITIES = {"Gold": ["24K", "22K", "21K", "20K", "18K", "14K"], "Silver": ["999", "925", "800"]}
+DEFAULT_PURITY = {"Gold": "24K", "Silver": "999"}
+# Starting local premium over the international price: India's 6% import duty. Calibrate it to your jeweller.
+DEFAULT_PREMIUM = {"Gold": 6.0, "Silver": 6.0}
 SAVINGS_BUCKET = "Cash & Savings"
 INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
@@ -284,6 +288,11 @@ def usd_inr(path: str | None = None) -> float:
     if meta_get("fx_use_manual", "0", path) == "1":
         return float(meta_get("fx_manual", 0, path) or 0)
     return float(meta_get("fx_usdinr", 0, path) or 0)
+
+
+def metal_premium(metal: str, path: str | None = None) -> float:
+    v = meta_get(f"premium_{metal.lower()}", None, path)
+    return float(v) if v not in (None, "") else DEFAULT_PREMIUM[metal]
 
 
 def metal_prices(path: str | None = None) -> dict[str, float]:
