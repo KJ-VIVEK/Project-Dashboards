@@ -23,14 +23,37 @@ IDEAL, REAL = "#898781", "#2a78d6"
 
 
 # ------------------------------------------------------------------ helpers
-DATE_MIN, DATE_MAX = date(1950, 1, 1), date(2100, 12, 31)   # Streamlit's default window is only +/-10 years
+DATE_MIN, DATE_MAX = date(1995, 1, 1), date(2100, 12, 31)
 
 
-def dinput(container, label, *args, **kw):
-    """Date picker that allows long horizons (a 40-50 year policy or loan) and old start dates."""
-    kw.setdefault("min_value", DATE_MIN)
-    kw.setdefault("max_value", DATE_MAX)
-    return container.date_input(label, *args, **kw)
+def dinput(container, label, value=None, key=None, help=None):
+    """Date picker made of three scrolling lists (day, month, year 1995-2100).  Returns a date or None."""
+    import calendar
+    import inspect
+    key = key or f"dt{inspect.currentframe().f_back.f_lineno}_{label}"
+    container.markdown(f"<div style='font-size:14px;margin-bottom:-6px'>{label}</div>", unsafe_allow_html=True)
+    if help:
+        container.caption(help)
+    c = container.columns([1, 1.2, 1.3])
+    blank = "-"
+    years = list(range(DATE_MIN.year, DATE_MAX.year + 1))
+    d_opts = ([blank] if value is None else []) + list(range(1, 32))
+    m_opts = ([blank] if value is None else []) + MONTHS
+    y_opts = ([blank] if value is None else []) + years
+    pre = lambda opts, v: opts.index(v) if (v is not None and v in opts) else 0
+    day = c[0].selectbox("Day", d_opts, index=pre(d_opts, value.day if value else None), key=key + "_d", label_visibility="collapsed")
+    mon = c[1].selectbox("Month", m_opts, index=pre(m_opts, MONTHS[value.month - 1] if value else None), key=key + "_m", label_visibility="collapsed")
+    yr = c[2].selectbox("Year", y_opts, index=pre(y_opts, value.year if value else None), key=key + "_y", label_visibility="collapsed")
+    if blank in (day, mon, yr):
+        if not (day == mon == yr == blank):
+            container.caption("Pick day, month and year, or leave all three as -.")
+        return None
+    month = MONTHS.index(mon) + 1
+    last = calendar.monthrange(yr, month)[1]
+    if day > last:
+        container.caption(f"{mon} {yr} has {last} days, using {last}.")
+        day = last
+    return date(yr, month, day)
 
 
 def dcol(label, **kw):

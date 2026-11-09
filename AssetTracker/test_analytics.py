@@ -644,7 +644,7 @@ def test_dates_must_be_real_in_range_and_in_order():
     m = val.validate("insurance", _df(id=1, name="P", premium=1.0, frequency="Yearly",
                                       start_date=date(2026, 5, 1), end_date=date(2026, 1, 1)))
     assert m == ["Row 1 (P): End date (2026-01-01) is before start date (2026-05-01)."]
-    assert any("outside 1950-2100" in x for x in val.validate("loans", _df(id=1, name="L", start_date=date(2150, 1, 1))))
+    assert any("outside 1995-2100" in x for x in val.validate("loans", _df(id=1, name="L", start_date=date(2150, 1, 1))))
     assert any("not a valid date" in x for x in val.validate("loans", _df(id=1, name="L", start_date="soon")))
     assert any("Closed on" in x and "before" in x for x in val.validate(
         "loans", _df(id=1, name="L", start_date=date(2025, 5, 1), closed_date=date(2025, 1, 1))))
