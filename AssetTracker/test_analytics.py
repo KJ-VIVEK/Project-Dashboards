@@ -406,12 +406,12 @@ def test_ktm_loan_every_figure():
     assert r["interest_full"] == pytest.approx(129694.46, abs=0.01)
     assert r["interest_saved"] == pytest.approx(129694.46 - 29043, abs=0.01)
     assert r["net_saved"] == pytest.approx(r["interest_saved"] - 11179, abs=0.01)
-    # the calculator's estimate for the same 8 instalments lands within 1% of what was really paid
+    # the calculator's estimate for the same 8 installments lands within 1% of what was really paid
     assert r["interest_est"] == pytest.approx(29043, rel=0.01)
     assert r["balance_est"] == pytest.approx(247287, rel=0.01)
 
 
-def test_tenure_falls_back_to_dates_without_instalments_and_markdown_reports_it():
+def test_tenure_falls_back_to_dates_without_installments_and_markdown_reports_it():
     k = dict(KTM, installments_paid=None, emi_paid=None, emi_interest=None, closing_payment=None)
     r = an.loans_frame(pd.DataFrame([k])).iloc[0]
     assert r["tenure_months"] == 10 and pd.isna(r["interest_paid"]) is False   # estimated from the calculator
