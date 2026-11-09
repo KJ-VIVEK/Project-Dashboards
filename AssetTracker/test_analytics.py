@@ -634,7 +634,8 @@ def test_wrong_values_are_reported_in_words():
     assert any("must be a number" in x for x in val.validate("loans", _df(id=1, name="L", principal="abc")))
     assert any("between 0 and 100" in x for x in val.validate("loans", _df(id=1, name="L", interest_rate=250.0)))
     assert any("whole number" in x for x in val.validate("loans", _df(id=1, name="L", installments_paid=2.5)))
-    assert any("Amount cannot be negative" in x for x in val.validate("income", _df(id=1, source="Salary", amount=-1.0)))
+    assert not val.validate("income", _df(id=1, source="Salary", amount=-1.0))      # losses are allowed on any source
+    assert any("positive amount" in x for x in val.validate("income", _df(id=1, source="Taxes Paid", amount=-1.0)))
     assert any("cannot be zero" in x for x in val.validate("income", _df(id=1, source="Salary", amount=0.0)))
     assert any("Purity “925” does not exist for Gold" in x
                for x in val.validate("metals", _df(id=1, metal="Gold", purity="925", grams=1.0, rate_per_g=1.0)))
@@ -787,3 +788,13 @@ def test_source_pivot_year_with_no_rows_is_zero_not_error():
     d, r = _empty_auto()
     pv = _source_total_row(an.income_frame(inc, d, r), 2030)
     assert pv.loc["Total", "Total"] == 0
+
+
+def test_negative_amounts_on_any_source_reduce_the_totals():
+    inc = _src([[date(2025, 4, 1), "Dividend/FD", "FD closed early, penalty", -1500.0, None, None],
+                [date(2025, 4, 2), "Dividend/FD", "FD interest", 4000.0, 100.0, None],
+                [date(2025, 4, 3), "Salary", "reversal", -200.0, None, None]])
+    d, r = _empty_auto()
+    pv = _source_total_row(an.income_frame(inc, d, r), 2025)
+    assert pv.loc["Dividend/FD", 4] == 2500 and pv.loc["Salary", 4] == -200
+    assert pv.loc["Total", "Total"] == 2500 - 100 - 200 == 2200

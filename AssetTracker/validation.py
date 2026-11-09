@@ -132,8 +132,9 @@ def validate(table: str, df: pd.DataFrame, required=()) -> list[str]:
             n = _num(row["amount"])
             if n == 0:
                 bad("Amount cannot be zero.")
-            elif n is not None and n < 0 and row.get("source") != "PL Booking":
-                bad("Amount cannot be negative here (only PL Booking can be a loss).")
+            elif n is not None and n < 0 and row.get("source") in db.DEDUCTION_SOURCES:
+                bad("A Taxes Paid / Other Deductions row is entered as a positive amount (it is subtracted for you). "
+                    "Use the Taxes paid column on the inflow, or a negative amount under another source for a loss.")
         if table == "loans" and not _blank(row.get("installments_paid")):
             n = _num(row["installments_paid"])
             if n is not None and n != int(n):

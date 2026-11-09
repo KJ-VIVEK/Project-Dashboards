@@ -375,7 +375,7 @@ with tabs[0]:
 
 # ================================================================== 2. SOURCE (income)
 with tabs[1]:
-    st.caption("Everything you earn, by month. Each entry carries its own **Taxes paid** and **Other deductions** (PF, professional tax…), "
+    st.caption("Everything you earn, by month (use a negative amount for a loss, e.g. an FD closed early). Each entry carries its own **Taxes paid** and **Other deductions** (PF, professional tax…), "
                "entered as positive amounts and subtracted from the totals, so income shown is after deductions. Dividends and realised profit/loss from the Stocks tab "
                "appear in the tables below automatically (switch this off on the Summary tab).")
     with st.form("add_income", clear_on_submit=True, border=False):
@@ -384,14 +384,16 @@ with tabs[1]:
         s_ = c[1].selectbox("Source", [x for x in db.INCOME_SOURCES if x not in db.DEDUCTION_SOURCES])
         desc = c[2].text_input("Description", placeholder="e.g. Employer name, FD interest, Swing trade")
         c = st.columns([1, 1, 1, 0.8], vertical_alignment="bottom")
-        amt = c[0].number_input("Amount (₹)", min_value=0.0, step=1000.0, format="%.2f")
+        amt = c[0].number_input("Amount (₹)", step=1000.0, format="%.2f",
+                                help="Negative for a loss or money lost, e.g. an FD closed early.")
         tax = c[1].number_input("Taxes paid (₹)", min_value=0.0, step=500.0, format="%.2f",
                                 help="Taken off this inflow. Kept on the same entry.")
         oth = c[2].number_input("Other deductions (₹)", min_value=0.0, step=500.0, format="%.2f",
                                 help="PF, professional tax, anything else taken off on this date.")
         if c[3].form_submit_button("Add", width="stretch", type="primary"):
-            if amt <= 0:
-                st.error("Enter the amount received, above zero. Taxes and deductions belong to that inflow.")
+            if amt == 0:
+                st.error("Enter the amount, positive for money received or negative for a loss. Taxes and deductions "
+                         "belong to that inflow.")
             else:
                 db.insert("income", {"date": d_, "source": s_, "description": desc.strip(), "amount": amt,
                                      "tax_paid": tax or None, "other_deductions": oth or None})
@@ -431,7 +433,9 @@ with tabs[1]:
     edit_table("income", sub, sub, {
         "date": dcol("Date", required=True),
         "source": st.column_config.SelectboxColumn("Section", options=db.INCOME_SOURCES, required=True),
-        "description": "Description", "amount": money_cfg("Amount (₹)", required=True),
+        "description": "Description",
+        "amount": st.column_config.NumberColumn("Amount (₹)", format="%.2f", required=True,
+                                                help="Negative for a loss, e.g. an FD closed early."),
         "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
         "other_deductions": money_cfg("Other deductions (₹)", help="PF, professional tax… deducted from this inflow.")},
         ("date", "source", "amount"), "income")
