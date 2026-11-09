@@ -494,8 +494,8 @@ def test_premium_change_applies_from_its_month_and_keeps_the_policy():
     assert f["premium_now"] == 15000 and f["per_year"] == 15000 and f["per_month"] == 1250
     assert f["year_cost"] == pytest.approx(18000 * 3 / 12 + 15000 * 9 / 12)        # Jan-Mar old, Apr-Dec new
     assert an.insurance_frame(term, revs, year=2025, today=TODAY).iloc[0]["year_cost"] == pytest.approx(18000)
-    # paid to date: Apr 2022 .. Mar 2026 = 48 months at 1,500 + Apr..Nov 2026 = 8 months at 1,250
-    assert f["months_to_date"] == 56 and f["paid_to_date"] == pytest.approx(48 * 1500 + 8 * 1250)
+    # actually paid: 18,000 on 1 Apr 2022, 2023, 2024, 2025 and the new 15,000 on 1 Apr 2026 (a yearly premium is paid whole)
+    assert f["months_to_date"] == 56 and f["paid_to_date"] == pytest.approx(4 * 18000 + 15000)
     # another policy's revisions never leak across
     other = pd.concat([term, _policy(id=2, premium=500.0)], ignore_index=True)
     assert an.insurance_frame(other, revs, year=2026, today=TODAY).iloc[1]["premium_now"] == 500
@@ -530,16 +530,15 @@ def test_premiums_paid_are_tracked_monthly_and_subtracted_from_income():
     revs = pd.DataFrame([{"id": 1, "insurance_id": 1, "effective_from": date(2026, 10, 1), "premium": 15000.0,
                           "note": None}])
     pay = an.insurance_payments(term, revs, today=TODAY)
-    assert list(pay["date"]) == [date(2026, 8, 1), date(2026, 9, 1), date(2026, 10, 1), date(2026, 11, 1)]
-    assert list(pay["amount"]) == [1500, 1500, 1250, 1250]
+    assert list(pay["date"]) == [date(2026, 8, 20)] and list(pay["amount"]) == [18000]   # one yearly payment, in August
     assert pay["amount"].sum() == an.insurance_frame(term, revs, today=TODAY).iloc[0]["paid_to_date"]
     assert an.insurance_payments(_policy(), None, today=TODAY).empty            # no start date, no history
     inc = pd.DataFrame({"date": [date(2026, 8, 5)], "source": ["Salary"], "amount": [100000.0]})
     empty = pd.DataFrame(columns=["date", "amount", "pnl"])
     f = an.income_frame(inc, empty, empty, True, pay)
-    assert f["amount"].sum() == 100000 - 5500
+    assert f["amount"].sum() == 100000 - 18000
     assert set(f["source"]) == {"Salary", db.PREMIUM_SOURCE} and (f[f.source == db.PREMIUM_SOURCE]["amount"] < 0).all()
-    assert an.income_pivot(f, None, by="year").loc[db.PREMIUM_SOURCE, 2026] == -5500
+    assert an.income_pivot(f, None, by="year").loc[db.PREMIUM_SOURCE, 2026] == -18000
     assert an.income_frame(inc, empty, empty, True)["amount"].sum() == 100000    # off by default
 
 
@@ -562,7 +561,7 @@ def test_vehicle_od_and_tp_are_ordinary_policies_with_an_insured_label():
     ins = pd.concat([_policy(id=1, **od), _policy(id=2, **od2), _policy(id=3, **tp)], ignore_index=True)
     f = an.insurance_frame(ins, year=2026, today=TODAY)
     assert list(f["status"]) == ["Inactive", "Active", "Active"]
-    assert f["paid_to_date"].round(2).tolist() == [6000, 7200 / 12 * 9, 6000 / 60 * 21]      # TP: Mar 2025..Nov 2026
+    assert f["paid_to_date"].round(2).tolist() == [6000, 7200, 6000]       # one-time premiums are paid whole on the start date
     assert f["per_year"].tolist() == [0, 7200, 1200]                                           # TP 6,000 / 5 years
     assert f["year_cost"].sum() == pytest.approx(7200 / 12 * 10 + 1200 + 6000 / 12 * 2)         # new OD, TP, old OD Jan-Feb
     assert db.INSURED_FOR[:2] == ["Me", "Family"] and "Third Party (TP)" in db.INSURED_FOR
@@ -585,3 +584,18 @@ def test_status_follows_real_dates_not_whole_months():
     assert f["paid_to_date"] == pytest.approx(1800 * 12)                  # twelve months counted, never thirteen
     assert an.insurance_frame(p, today=date(2026, 11, 24)).iloc[0]["status"] == "Active"     # last day
     assert an.insurance_frame(p, today=date(2026, 11, 25)).iloc[0]["status"] == "Inactive"   # the day after
+
+
+def test_paid_follows_the_payment_dates_for_every_frequency():
+    d0 = date(2026, 1, 31)
+    cases = {"Monthly": 10, "Quarterly": 4, "Half-Yearly": 2, "Yearly": 1}       # payments made by 9 Nov 2026
+    for freq, n in cases.items():
+        pay = an.insurance_payments(_policy(premium=100.0, frequency=freq, start_date=d0), None, today=TODAY)
+        assert len(pay) == n and pay["amount"].sum() == 100 * n, freq
+    pay = an.insurance_payments(_policy(premium=100.0, frequency="Monthly", start_date=d0), None, today=TODAY)
+    assert pay["date"].iloc[1] == date(2026, 2, 28)                           # month-end is clamped, then back to the 31st
+    assert pay["date"].iloc[2] == date(2026, 3, 31)
+    ended = _policy(premium=100.0, frequency="Monthly", start_date=d0, end_date=date(2026, 4, 30))
+    assert len(an.insurance_payments(ended, None, today=TODAY)) == 4          # Jan 31, Feb 28, Mar 31, Apr 30
+    y = an.insurance_frame(_policy(premium=14379.0, frequency="Yearly", start_date=date(2026, 8, 1)), today=TODAY).iloc[0]
+    assert y["paid_to_date"] == 14379 and y["year_cost"] == pytest.approx(14379 * 5 / 12)    # paid whole; cost spread

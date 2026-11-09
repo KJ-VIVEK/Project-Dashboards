@@ -219,8 +219,8 @@ with tabs[0]:
                      help="Dividends count as Dividend/FD; sells count as PL Booking. Turn off if you also type "
                           "them on the Source sheet, to avoid double counting.", key="sum_auto")
     prem_on = st.toggle("Subtract insurance premiums paid (from the Insurance tab)", value=True, key="sum_prem",
-                        help="Premiums are spread evenly over the months each policy has been in force, from its start "
-                             "date to today, and subtracted from income like Taxes Paid.")
+                        help="Each premium is subtracted in the month you paid it (a yearly premium whole, on its start "
+                             "date and each anniversary; a monthly one every month), like Taxes Paid.")
     inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None)
     years = sorted(inc["year"].unique(), reverse=True)
     period = st.selectbox("Period", ["All time"] + years, key="sum_year",
@@ -445,7 +445,7 @@ with tabs[3]:
     start_years = [d.year for d in insurance["start_date"] if hasattr(d, "year") and pd.notna(d)]
     years = list(range(date.today().year, min(start_years + [date.today().year]) - 1, -1))
     ins_year = st.selectbox("Year", years, key="ins_year",
-                            help="Premiums are shown per year, spread over the months each policy is in force: "
+                            help="Used for “Premium in <year>”, which spreads each policy over the months it is in force: "
                                  "premium × payments per year × months in force ÷ 12.")
     ins_y = an.insurance_frame(insurance, ins_rev, year=ins_year)
     act = ins_y[ins_y["status"] == "Active"]
@@ -455,10 +455,12 @@ with tabs[3]:
     kpi(c[2], "Premium per year (now)", ins_y["per_year"].sum(), help="Today's rate for a full year.")
     st.write("")
     c = st.columns(3)
-    kpi(c[0], f"Premium in {ins_year}", ins_y["year_cost"].sum(),
-        help="Pro-rated by the months each policy was in force that year, with premium changes applied from their month.")
+    kpi(c[0], f"Cost in {ins_year} (per year)", ins_y["year_cost"].sum(),
+        help="What the year costs, spread over the months each policy was in force, with premium changes applied from "
+             "their month. This is not cash paid: a yearly premium is spread over its 12 months.")
     kpi(c[1], "Paid to date", ins_y["paid_to_date"].sum(skipna=True),
-        help="From each policy's start date until today (or its end date). Needs a start date.")
+        help="The premiums you have actually paid, on their payment dates: a yearly premium in full at the start of "
+             "each year, a monthly one every month. Needs a start date.")
     kpi(c[2], "Total cover", an.num(act["sum_assured"]).sum())
     st.write("")
     due = ins_y[ins_y["status"] == "Active"].copy()
@@ -542,7 +544,7 @@ with tabs[3]:
             hist = []
             for _, p in insurance.iterrows():
                 hist.append({"Policy": p["name"], "From": p["start_date"] if hasattr(p["start_date"], "year") and pd.notna(p["start_date"]) else None,
-                             "Premium": p["premium"], "Note": "starting premium"})
+                             "Premium": p["premium"], "Note": "premium at the start"})
                 for _, r in ins_rev[ins_rev["insurance_id"] == p["id"]].sort_values("effective_from").iterrows():
                     hist.append({"Policy": p["name"], "From": r["effective_from"], "Premium": r["premium"],
                                  "Note": r["note"] if isinstance(r["note"], str) else ""})
@@ -568,7 +570,8 @@ with tabs[3]:
                           "Insurance amount": an.num(g["sum_assured"]).map(an.inr)})
         st.markdown("##### Policies")
         st.dataframe(t, hide_index=True, width="stretch")
-        st.caption("Premium paid is the total since the policy started, with premium changes applied. "
+        st.caption("Premium paid is what you have actually paid since the policy started: a yearly premium counts in full at "
+                   "the start of each year, a monthly one every month, with premium changes applied. "
                    "Active means the policy is running today.")
         nodate = [f"{r['name']} ({an.inr(r['premium'])} {r['frequency'].lower()})"
                   for _, r in ins_y[ins_y["paid_to_date"].isna()].iterrows()]
@@ -581,15 +584,17 @@ with tabs[3]:
             "name": st.column_config.TextColumn("Policy", required=True),
             "type": st.column_config.SelectboxColumn("Type", options=db.INSURANCE_TYPES),
             "provider": "Provider", "policy_no": "Policy no.", "sum_assured": money_cfg("Sum assured (₹)"),
-            "premium": money_cfg("Starting premium (₹)", required=True),
+            "premium": money_cfg("Premium (₹)", required=True,
+                                 help="The premium for the sum insured, each time you pay it."),
             "frequency": st.column_config.SelectboxColumn("Paid", options=db.FREQUENCY_OPTIONS, required=True),
             "next_due": dcol("Next due"),
             "insured_for": st.column_config.SelectboxColumn("Insured", options=db.INSURED_FOR),
             "start_date": dcol("Start"), "end_date": dcol("End"),
             "link": st.column_config.LinkColumn("Policy link", display_text="Open"), "notes": "Notes",
             "active": st.column_config.CheckboxColumn("Active")}, ("name", "premium", "frequency"), "insurance",
-            hint="Untick Active when a policy lapses and add an end date. To change what you pay, use "
-                 "“Premium changed?” above rather than editing the starting premium.")
+            hint="Untick Active when a policy lapses and add an end date. If the amount you pay "
+                 "changes from a date (a tax change), record it under “Premium changed?” above so earlier payments keep "
+                 "the old amount.")
 
 # ================================================================== 5. LOANS
 def _m(v):
