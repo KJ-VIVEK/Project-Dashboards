@@ -471,11 +471,13 @@ with tabs[3]:
 
 # ================================================================== 5. LOANS
 with tabs[4]:
-    c = st.columns(5)
+    c = st.columns(6)
     kpi(c[0], "Total outstanding", loans_total)
     kpi(c[1], "EMI per month", loans_f["emi"].sum())
-    for col, cat in zip(c[2:], db.LOAN_CATEGORIES):
+    for col, cat in zip(c[2:5], db.LOAN_CATEGORIES):
         kpi(col, f"{cat} debt", loans_f.loc[loans_f["category"] == cat, "outstanding"].sum())
+    n_closed = int((loans_f["status"] == "Closed").sum())
+    kpi(c[5], "Loans", f"{len(loans_f) - n_closed} active · {n_closed} closed")
     st.caption("**Good**: builds an asset or income (home, education). **Bad**: buys something that loses value "
                "(car, gadgets). **Worst**: funds consumption at high interest (credit card, personal loan).")
     with st.form("add_loan", clear_on_submit=True):
@@ -484,7 +486,11 @@ with tabs[4]:
         lender = c[1].text_input("Lender")
         cat = c[2].selectbox("Category", db.LOAN_CATEGORIES)
         prin = c[3].number_input("Principal (₹)", min_value=0.0, step=10000.0, format="%.0f")
-        outs = c[4].number_input("Outstanding (₹)", min_value=0.0, step=10000.0, format="%.0f")
+        outs = c[4].number_input("Outstanding (₹)", min_value=0.0, step=10000.0, format="%.0f",
+                                 help="Leave 0 for a closed loan.")
+        c = st.columns([1, 1, 1, 1, 2], vertical_alignment="bottom")
+        status = c[0].selectbox("Status", db.LOAN_STATUSES)
+        closed_on = c[1].date_input("Closed on", value=None, help="Only for closed loans; gives the tenure it ran.")
         c = st.columns([1, 1, 1, 1, 2], vertical_alignment="bottom")
         rate = c[0].number_input("Interest %", min_value=0.0, step=0.1, format="%.2f")
         emi = c[1].number_input("EMI (₹)", min_value=0.0, step=500.0, format="%.0f")
@@ -494,20 +500,26 @@ with tabs[4]:
         details = st.text_area("Details others should know", placeholder="Co-borrower, collateral, prepayment rules, "
                                "where the papers are…", height=80)
         if st.form_submit_button("Add loan", type="primary"):
-            if name.strip() and outs > 0:
+            closed = status == "Closed"
+            if not name.strip():
+                st.error("A loan name is needed.")
+            elif not closed and outs <= 0:
+                st.error("An active loan needs an outstanding amount above zero (choose Closed if it is repaid).")
+            elif closed and sd and closed_on and closed_on < sd:
+                st.error("The closing date is before the start date.")
+            else:
                 db.insert("loans", {"name": name, "lender": lender, "category": cat, "principal": prin or None,
-                                    "outstanding": outs, "interest_rate": rate or None, "emi": emi or None,
+                                    "status": status, "closed_date": closed_on if closed else None,
+                                    "outstanding": 0.0 if closed else outs, "interest_rate": rate or None, "emi": emi or None,
                                     "start_date": sd, "end_date": ed_, "link": link, "details": details})
                 flash("Loan added.")
                 st.rerun()
-            else:
-                st.error("A name and an outstanding amount above zero are needed.")
-    if not loans_f.empty:
+    if not loans_f.empty and loans_total > 0:
         g = loans_f.groupby("category")["outstanding"].sum().reindex(db.LOAN_CATEGORIES).dropna()
         fig = go.Figure(go.Bar(x=g.values, y=g.index, orientation="h", marker_color=[LOAN_COLORS[k] for k in g.index]))
         fig.update_xaxes(tickprefix="₹", tickformat="~s")
         show(style(fig, "Outstanding by debt quality", height=220))
-    edit_table("loans", loans, loans, {
+    edit_table("loans", loans.assign(tenure_months=loans_f["tenure_months"]), loans, {
         "name": st.column_config.TextColumn("Loan", required=True), "lender": "Lender",
         "category": st.column_config.SelectboxColumn("Category", options=db.LOAN_CATEGORIES, required=True),
         "principal": money_cfg("Principal (₹)"), "outstanding": money_cfg("Outstanding (₹)", required=True),
@@ -515,7 +527,13 @@ with tabs[4]:
         "emi": money_cfg("EMI (₹)"), "start_date": st.column_config.DateColumn("Start"),
         "end_date": st.column_config.DateColumn("End"),
         "link": st.column_config.LinkColumn("Documents", display_text="Open"),
-        "details": st.column_config.TextColumn("Details", width="large")}, ("name", "category", "outstanding"), "loans")
+        "status": st.column_config.SelectboxColumn("Status", options=db.LOAN_STATUSES, required=True),
+        "closed_date": st.column_config.DateColumn("Closed on"),
+        "tenure_months": st.column_config.NumberColumn("Tenure (months)", disabled=True, format="%d",
+                                                       help="Start to closing date (or planned end for active loans)."),
+        "details": st.column_config.TextColumn("Details", width="large")}, ("name", "category"), "loans",
+        to_db=lambda e: e.drop(columns="tenure_months").assign(
+            outstanding=lambda d: d["outstanding"].where(d["status"] != "Closed", 0).fillna(0)))
     if not loans.empty:
         st.markdown("**Share loan details**")
         pick = st.selectbox("Loan", ["All loans"] + loans["name"].tolist(), key="loan_pick")

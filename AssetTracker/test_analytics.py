@@ -295,3 +295,19 @@ def test_metal_premium_defaults_to_india_duty_until_set(path):
     assert db.metal_premium("Gold", path) == 6.0
     db.meta_set("premium_gold", 0, path)
     assert db.metal_premium("Gold", path) == 0.0
+
+
+def test_closed_loan_owes_nothing_and_has_tenure():
+    import datetime as dt
+    l = pd.DataFrame([
+        {"id": 1, "name": "A", "lender": "X", "link": None, "details": None, "category": "Worst", "principal": 200000.0, "outstanding": 5000.0, "interest_rate": 14.0,
+         "emi": 9000.0, "start_date": dt.date(2024, 2, 1), "end_date": None, "status": "Closed",
+         "closed_date": dt.date(2024, 11, 15)},
+        {"id": 2, "name": "B", "lender": "Y", "link": None, "details": None, "category": "Good", "principal": 1e6, "outstanding": 8e5, "interest_rate": 8.0,
+         "emi": 10000.0, "start_date": dt.date(2024, 1, 1), "end_date": dt.date(2034, 1, 1), "status": None,
+         "closed_date": None}])
+    f = an.loans_frame(l)
+    assert f.loc[0, "outstanding"] == 0 and f.loc[0, "emi"] == 0 and f.loc[0, "repaid_pct"] == 100
+    assert f.loc[0, "tenure_months"] == 9
+    assert f.loc[1, "status"] == "Active" and f.loc[1, "outstanding"] == 8e5 and f.loc[1, "tenure_months"] == 120
+    assert "Closed" in an.loans_markdown(l) and "9 months" in an.loans_markdown(l)
