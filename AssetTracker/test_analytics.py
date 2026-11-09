@@ -575,3 +575,13 @@ def test_a_policy_starting_later_this_month_has_not_started_and_has_paid_nothing
     assert an.insurance_payments(_policy(start_date=date(2026, 11, 25)), None, today=TODAY).empty
     g = an.insurance_frame(_policy(start_date=date(2026, 11, 9)), today=TODAY).iloc[0]       # starts today
     assert g["status"] == "Active" and g["paid_to_date"] == 1800
+
+
+def test_status_follows_real_dates_not_whole_months():
+    """25 Nov 2025 - 24 Nov 2026 is still running on 9 Nov 2026 (its last *counted* month is October)."""
+    p = _policy(start_date=date(2025, 11, 25), end_date=date(2026, 11, 24))
+    f = an.insurance_frame(p, today=TODAY).iloc[0]
+    assert f["status"] == "Active" and f["per_year"] == 21600
+    assert f["paid_to_date"] == pytest.approx(1800 * 12)                  # twelve months counted, never thirteen
+    assert an.insurance_frame(p, today=date(2026, 11, 24)).iloc[0]["status"] == "Active"     # last day
+    assert an.insurance_frame(p, today=date(2026, 11, 25)).iloc[0]["status"] == "Inactive"   # the day after
