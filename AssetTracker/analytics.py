@@ -290,6 +290,12 @@ def insurance_monthly(ins: pd.DataFrame, revisions: pd.DataFrame | None, year: i
     return out
 
 
+def _short(component, fallback) -> str:
+    """'Own Damage (OD)' -> 'OD', 'Third Party (TP)' -> 'TP'; other covers keep their name."""
+    c = component if isinstance(component, str) else str(fallback)
+    return c[c.rfind("(") + 1:c.rfind(")")] if "(" in c and c.endswith(")") else c
+
+
 def insurance_policies(frame: pd.DataFrame) -> pd.DataFrame:
     """One row per policy. A policy made of covers (vehicle insurance: Own Damage + Third Party) takes its status,
     premiums and amounts from its covers; a plain policy is itself. `covers` is a short text of each cover's state."""
@@ -307,13 +313,20 @@ def insurance_policies(frame: pd.DataFrame) -> pd.DataFrame:
                  paid_to_date=float(paid.sum()) if paid.notna().any() else float("nan"),
                  **{c: float(pd.to_numeric(rows[c], errors="coerce").fillna(0).sum())
                     for c in ("per_year", "per_month", "year_cost")})
+        live_sum = pd.to_numeric(kids.loc[kids["status"] == "Active", "sum_assured"], errors="coerce") if len(kids) else None
+        if live_sum is not None and pd.to_numeric(kids["sum_assured"], errors="coerce").notna().any():
+            d["sum_assured"] = float(live_sum.fillna(0).sum())      # each cover insures its own amount
+        d["insured"] = " · ".join(
+            f"{_short(k['component'], k['name'])} {inr(k['sum_assured'])}"
+            for _, k in kids[kids["status"] == "Active"].sort_values("start_date", na_position="first").iterrows()
+            if pd.notna(pd.to_numeric(k["sum_assured"], errors="coerce")))
         live = kids[kids["status"] != "Inactive"].sort_values("start_date", na_position="first")
         d["covers"] = (" · ".join(
             f"{(k['component'] if isinstance(k['component'], str) else k['name'])} ({k['status'].lower()}"
             + (f", to {k['end_date']}" if hasattr(k["end_date"], "year") and pd.notna(k["end_date"]) else "") + ")"
             for _, k in live.iterrows()) or ("all covers ended" if len(kids) else ""))
         out.append(d)
-    return pd.DataFrame(out, columns=list(f.columns) + ["n_covers", "covers"])
+    return pd.DataFrame(out, columns=list(f.columns) + ["n_covers", "covers", "insured"])
 
 
 def renewal_end(start):
@@ -331,8 +344,11 @@ def insurance_terms(covers: pd.DataFrame) -> pd.DataFrame:
     Own Damage and Third Party premiums side by side (a 5-year TP bought in the first term simply has no TP premium in
     the later ones)."""
     if covers.empty:
-        return pd.DataFrame(columns=["from", "to", "policy_no", "od", "tp", "other", "total", "status"])
+        return pd.DataFrame(columns=["from", "to", "policy_no", "od", "tp", "other", "total", "od_sum", "tp_sum", "status"])
     c = covers.copy()
+    for col in ("policy_no", "sum_assured"):
+        if col not in c:
+            c[col] = None
     c["_key"] = c["start_date"].astype(str) + "|" + c["policy_no"].fillna("").astype(str)
     order = {"Active": 0, "Not started": 1, "Inactive": 2}
     rows = []
@@ -344,10 +360,16 @@ def insurance_terms(covers: pd.DataFrame) -> pd.DataFrame:
         known = g["component"].fillna("").str.contains("(OD)", regex=False) | g["component"].fillna("").str.contains("(TP)", regex=False)
         other = float(g.loc[~known, "premium_now"].sum()) if (~known).any() else float("nan")
         total = float(g["premium_now"].sum())
+
+        def insured(tag):
+            m = g["component"].fillna("").str.contains(tag, regex=False)
+            v = pd.to_numeric(g.loc[m, "sum_assured"], errors="coerce") if "sum_assured" in g else None
+            return float(v.sum()) if v is not None and v.notna().any() else float("nan")
         ends = [e for e in g["end_date"] if hasattr(e, "year") and pd.notna(e)]
         rows.append({"from": g["start_date"].iloc[0], "to": max(ends) if ends else None,
                      "policy_no": g["policy_no"].iloc[0] if isinstance(g["policy_no"].iloc[0], str) else "",
                      "od": od, "tp": tp, "other": other, "total": total,
+                     "od_sum": insured("(OD)"), "tp_sum": insured("(TP)"),
                      "status": min(g["status"], key=lambda x: order.get(x, 3))})
     return pd.DataFrame(rows).sort_values("from", ascending=False, na_position="last").reset_index(drop=True)
 
