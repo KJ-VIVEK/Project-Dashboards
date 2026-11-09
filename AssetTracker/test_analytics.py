@@ -164,9 +164,9 @@ def test_sync_table_add_update_delete(path):
     ed = orig.copy()
     ed = ed.iloc[1:].reset_index(drop=True)            # delete row 1
     ed.loc[0, "amount"] = 25.0                          # update row 2
-    ed.loc[len(ed)] = [None, date(2025, 2, 1), "Misc", "gift", 5.0, None, None, None]       # add
-    ed.loc[len(ed)] = [None, None, None, None, None, None, None, None]                      # blank: ignored
-    ed.loc[len(ed)] = [None, date(2025, 3, 1), "Salary", None, None, None, None, None]      # no amount: skipped
+    ed.loc[len(ed)] = [None, date(2025, 2, 1), "Misc", "gift", 5.0, None, None, None, None]       # add
+    ed.loc[len(ed)] = [None, None, None, None, None, None, None, None, None]                      # blank: ignored
+    ed.loc[len(ed)] = [None, date(2025, 3, 1), "Salary", None, None, None, None, None, None]      # no amount: skipped
     stats = db.sync_table("income", orig, ed, required=("date", "source", "amount"), path=path)
     assert stats == {"added": 1, "updated": 1, "deleted": 1, "skipped": 1}
     now = db.get_table("income", path)
@@ -855,20 +855,29 @@ def test_rsu_vested_is_an_income_source_counted_in_totals():
 def test_unsold_rsus_are_valued_at_todays_rate_not_the_vest_day_rate():
     inc = _src([[date(2025, 5, 1), "RSU Vested", "Intel", 21216.0, 6000.0, None],      # 255 USD at 83.2 on the vest day
                 [date(2025, 5, 2), "Salary", "pay", 1000.0, None, None]])
-    inc["usd_amount"] = [255.0, None]
+    inc["rsu_qty"], inc["rsu_buy_price"] = [10.0, None], [25.5, None]
     d, r = _empty_auto()
     now = an.income_frame(inc, d, r, usd_inr=90.0)
     assert now.loc[now["source"] == "RSU Vested", "amount"].iloc[0] == 255 * 90      # follows the live rate
     assert now["amount"].sum() == 255 * 90 + 1000 - 6000
     assert an.income_frame(inc, d, r)["amount"].sum() == 21216 + 1000 - 6000         # no live rate: the vest-day value
-    inc2 = inc.copy(); inc2["usd_amount"] = [None, None]
+    inc2 = inc.copy(); inc2["rsu_qty"] = [None, None]
     assert an.income_frame(inc2, d, r, usd_inr=90.0)["amount"].sum() == 21216 + 1000 - 6000   # old rows keep their ₹ value
 
 
 def test_rsu_table_shows_the_exchange_rate_effect():
     inc = _src([[date(2025, 5, 1), "RSU Vested", "Intel", 21216.0, None, None]])
-    inc["usd_amount"] = [255.0]
+    inc["rsu_qty"], inc["rsu_buy_price"] = [10.0], [25.5]
     t = an.rsu_table(inc, 90.0)
     assert t["inr_at_vest"].iloc[0] == 21216 and t["inr_now"].iloc[0] == 22950 and t["fx_impact"].iloc[0] == 1734
     assert pd.isna(an.rsu_table(inc, None)["inr_now"].iloc[0])
-    assert an.rsu_table(inc.assign(usd_amount=[None]), 90.0).empty
+    assert an.rsu_table(inc.assign(rsu_qty=[None]), 90.0).empty
+
+
+def test_rsu_total_is_qty_times_buy_price_times_todays_rate():
+    inc = _src([[date(2026, 11, 1), "RSU Vested", "Intel", 0.0, None, None]])
+    inc["rsu_qty"], inc["rsu_buy_price"] = [7.0], [44.65]
+    d, r = _empty_auto()
+    df = an.income_frame(inc, d, r, usd_inr=93.92)
+    assert round(df["amount"].sum(), 2) == round(7 * 44.65 * 93.92, 2) == 29354.7      # 312.55 USD x 93.92
+    assert round(an.rsu_table(inc, 93.92)["usd"].iloc[0], 2) == 312.55
