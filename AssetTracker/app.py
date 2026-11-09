@@ -568,12 +568,13 @@ with tabs[4]:
                     help="Full tenure interest (standard calculator) − interest paid", delta=None)
                 tl = []
                 if pd.notna(r["tenure_months"]):
-                    ran = f"ran {int(r['tenure_months'])} months"
+                    unit = "instalments" if pd.notna(r["installments_paid"]) else "months"
+                    ran = f"closed after {int(r['tenure_months'])} {unit}"
                     if pd.notna(r["planned_months"]):
                         ran += f" of {int(r['planned_months'])} planned"
                     tl.append(ran)
-                if pd.notna(r["installments_paid"]):
-                    tl.append(f"{int(r['installments_paid'])} instalments paid")
+                if pd.notna(r["elapsed_months"]):
+                    tl.append(f"{int(r['elapsed_months'])} months from start to closing")
                 tl.append(f"{r['start_date'] or '–'} → {r['closed_date'] or '–'}")
                 st.caption(" · ".join(tl))
                 rows = [("Down payment", r["down_payment"], "your pocket, day one"),
@@ -653,7 +654,7 @@ with tabs[4]:
             "emi_paid": money_cfg("Paid via instalments (₹)"), "emi_interest": money_cfg("…interest in them (₹)"),
             "closing_payment": money_cfg("Paid to close (₹)"),
             "tenure_months": st.column_config.NumberColumn("Tenure (months)", disabled=True, format="%d",
-                                                           help="Start to closing date (or planned end for active loans)."),
+                                                           help="Instalments paid when recorded, otherwise whole months from start to closing (or planned end)."),
             "link": st.column_config.LinkColumn("Documents", display_text="Open"),
             "details": st.column_config.TextColumn("Details", width="large")}, ("name", "category"), "loans",
             to_db=lambda e: e.drop(columns="tenure_months").assign(

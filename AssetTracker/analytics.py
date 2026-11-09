@@ -219,6 +219,25 @@ def insurance_frame(ins: pd.DataFrame) -> pd.DataFrame:
     return i
 
 
+OPTIONAL_LOAN_COLS = ("installments_paid", "down_payment", "other_charges", "emi_paid", "emi_interest",
+                      "closing_payment")
+
+
+def whole_months(a, b):
+    """Completed months from date a to date b (None when either is missing); a month completes on the same day
+    number, or on the last day of a shorter month (30 Jan to 29 Feb is one month; 15 Jan to 14 Feb is zero)."""
+    import calendar
+    try:
+        if a is None or b is None or pd.isna(a) or pd.isna(b):
+            return None
+        m = (b.year - a.year) * 12 + (b.month - a.month)
+        if b.day < a.day and b.day != calendar.monthrange(b.year, b.month)[1]:
+            m -= 1
+        return max(0, m)
+    except AttributeError:
+        return None
+
+
 def emi_schedule(principal: float, rate_pct: float, planned_months: int, months_paid: int) -> dict | None:
     """Standard reducing-balance EMI maths for a loan that is paid off after `months_paid` EMIs.
 
@@ -256,17 +275,14 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     l.loc[closed, "emi"] = 0.0                  # and costs no EMI going forward
     end = l["closed_date"].where(closed, l["end_date"]) if "closed_date" in l else l["end_date"]
 
-    def months(a, b):
-        try:
-            if a is None or b is None or pd.isna(a) or pd.isna(b):
-                return None
-            return max(0, (b.year - a.year) * 12 + (b.month - a.month))
-        except AttributeError:
-            return None
-    l["tenure_months"] = [months(a, b) for a, b in zip(l["start_date"], end)]
-    l["planned_months"] = [months(a, b) for a, b in zip(l["start_date"], l["end_date"])]
-    for c in ("down_payment", "other_charges", "emi_paid", "emi_interest", "closing_payment", "installments_paid"):
-        l[c] = num(l[c]) if c in l else float("nan")
+    l["elapsed_months"] = [whole_months(a, b) for a, b in zip(l["start_date"], end)]
+    # tenure = instalments actually paid when recorded (the first EMI usually falls 1-2 months after disbursal),
+    # otherwise the whole months between the start and closing (or planned end) date
+    for c in OPTIONAL_LOAN_COLS:            # "not recorded" must stay NaN, never become 0
+        l[c] = pd.to_numeric(l[c], errors="coerce") if c in l else float("nan")
+    l["elapsed_months"] = pd.to_numeric(l["elapsed_months"], errors="coerce")
+    l["tenure_months"] = l["installments_paid"].where(l["installments_paid"].notna(), l["elapsed_months"])
+    l["planned_months"] = [whole_months(a, b) for a, b in zip(l["start_date"], l["end_date"])]
     l["other_charges"] = l["other_charges"].fillna(0.0)
     # what the borrower actually paid, when it was recorded
     l["asset_cost"] = (l["down_payment"].fillna(0.0) + l["principal"]).where(l["principal"] > 0)
@@ -275,7 +291,7 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     for c in est:
         l[c] = float("nan")
     for i, r in l.iterrows():
-        k = r["installments_paid"] if pd.notna(r["installments_paid"]) else (r["tenure_months"] if closed[i] else 0)
+        k = r["tenure_months"] if closed[i] else 0
         res = emi_schedule(r["principal"], r["interest_rate"], r["planned_months"], k if pd.notna(k) else None)
         if res:
             l.loc[i, ["emi_std", "interest_full"]] = [res["emi"], res["interest_full"]]
