@@ -331,3 +331,19 @@ def test_emi_schedule_interest_saved():
     assert early["interest_paid"] == pytest.approx(interest, abs=1)
     assert an.emi_schedule(1e6, 0, 10, 4)["interest_full"] == 0
     assert an.emi_schedule(None, 12, 12, 6) is None
+
+
+def test_closed_loan_with_actuals_reconciles():
+    import datetime as dt
+    l = pd.DataFrame([{"id": 1, "name": "Bike", "lender": "BF", "link": None, "details": None, "category": "Bad",
+                       "principal": 273000.0, "outstanding": 0.0, "interest_rate": 16.5, "emi": 6734.0,
+                       "start_date": dt.date(2023, 11, 30), "end_date": dt.date(2028, 11, 30), "status": "Closed",
+                       "closed_date": dt.date(2024, 9, 30), "down_payment": 150000.0, "other_charges": 11179.0,
+                       "installments_paid": 8, "emi_paid": 54756.0, "emi_interest": 29043.0,
+                       "closing_payment": 258466.0}])
+    r = an.loans_frame(l).iloc[0]
+    assert r["emi_principal"] == 25713 and r["balance_cleared"] == 247287
+    assert r["closing_gap"] == 0                                  # 247,287 + 11,179 = 258,466
+    assert r["asset_cost"] == 423000
+    assert r["total_paid"] - r["asset_cost"] == r["cost_of_borrowing"] == 29043 + 11179
+    assert r["interest_saved"] > 0 and r["net_saved"] == r["interest_saved"] - 11179

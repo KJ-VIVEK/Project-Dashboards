@@ -66,7 +66,9 @@ CREATE TABLE IF NOT EXISTS loans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL, lender TEXT, category TEXT NOT NULL, principal REAL, outstanding REAL NOT NULL,
     interest_rate REAL, emi REAL, start_date TEXT, end_date TEXT, link TEXT, details TEXT,
-    status TEXT DEFAULT 'Active', closed_date TEXT);
+    status TEXT DEFAULT 'Active', closed_date TEXT,
+    down_payment REAL, other_charges REAL, installments_paid INTEGER, emi_paid REAL, emi_interest REAL,
+    closing_payment REAL);
 CREATE TABLE IF NOT EXISTS metals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     metal TEXT NOT NULL, form TEXT, description TEXT, date TEXT, grams REAL NOT NULL,
@@ -95,7 +97,8 @@ TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
     "insurance": (["name", "type", "provider", "policy_no", "sum_assured", "premium", "frequency", "next_due",
                    "link", "notes", "active"], {"next_due"}, {"active"}),
     "loans": (["name", "lender", "category", "principal", "outstanding", "interest_rate", "emi", "start_date",
-               "end_date", "link", "details", "status", "closed_date"], {"start_date", "end_date", "closed_date"}, set()),
+               "end_date", "link", "details", "status", "closed_date", "down_payment", "other_charges",
+               "installments_paid", "emi_paid", "emi_interest", "closing_payment"], {"start_date", "end_date", "closed_date"}, set()),
     "metals": (["metal", "form", "description", "date", "grams", "rate_per_g", "making_charges", "gst",
                 "other_charges", "purity", "note"], {"date"}, set()),
     "real_estate": (["name", "kind", "location", "purchase_date", "cost", "area_sqft", "registration", "brokerage",
@@ -125,7 +128,9 @@ def connect(path: str | None = None):
 # columns added after the first release: (table, column, ddl)
 _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_rate", "REAL"),
                ("real_estate", "current_per_sqft", "REAL"),
-               ("loans", "status", "TEXT DEFAULT 'Active'"), ("loans", "closed_date", "TEXT")]
+               ("loans", "status", "TEXT DEFAULT 'Active'"), ("loans", "closed_date", "TEXT"), ("loans", "down_payment", "REAL"),
+               ("loans", "other_charges", "REAL"), ("loans", "installments_paid", "INTEGER"),
+               ("loans", "emi_paid", "REAL"), ("loans", "emi_interest", "REAL"), ("loans", "closing_payment", "REAL")]
 
 
 def init_db(path: str | None = None) -> None:
