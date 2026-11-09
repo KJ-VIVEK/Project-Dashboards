@@ -263,7 +263,35 @@ def _policy_schedule(row, revisions: list) -> dict:
                 prem = p
         return prem
 
-    return {"in_force": in_force, "premium_at": premium_at, "mult": mult, "start": start, "end": end, "last": last}
+    step = None if row.get("frequency") == db.ONE_TIME else {1: 12, 2: 6, 4: 3, 12: 1}.get(mult, 12)
+    return {"in_force": in_force, "premium_at": premium_at, "mult": mult, "start": start, "end": end, "last": last,
+            "active": active, "step": step}
+
+
+def _add_months(d, n):
+    import calendar
+    from datetime import date as _date
+    ym = _ym(d) + n
+    y, m = ym // 12, ym % 12 + 1
+    return _date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def _payments(sch, today) -> list:
+    """The premiums actually paid, as (date, amount): one on the start date and one every payment interval after it
+    (monthly, quarterly, half-yearly, yearly), until today or the end date. A one-time premium is a single payment on
+    the start date. The amount is the premium in force in the month of each payment."""
+    start, end = sch["start"], sch["end"]
+    if start is None or start > today or (not sch["active"] and end is None):
+        return []
+    limit = min(today, end) if end else today
+    if sch["step"] is None:
+        dates = [start] if start <= limit else []
+    else:
+        dates, k = [], 0
+        while _add_months(start, k * sch["step"]) <= limit:
+            dates.append(_add_months(start, k * sch["step"]))
+            k += 1
+    return [(d, sch["premium_at"](_ym(d))) for d in dates]
 
 
 def _revisions_by_policy(revisions) -> dict:
@@ -291,23 +319,16 @@ def insurance_monthly(ins: pd.DataFrame, revisions: pd.DataFrame | None, year: i
 
 
 def insurance_payments(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, today=None) -> pd.DataFrame:
-    """Every month's premium paid, from each policy's start date up to and including this month: one row per policy per
-    month (date = first of the month, amount spread as premium x payments per year / 12). Policies with no start date
-    have no known history and give no rows."""
+    """Every premium actually paid, one row per payment on its date (a yearly premium is one row in the month it is
+    paid, a monthly one a row every month). Policies with no start date have no known history and give no rows."""
     from datetime import date as _date
     today = today or _date.today()
-    now, rows = _ym(today), []
     by_policy = _revisions_by_policy(revisions)
+    rows = []
     for _, row in ins.iterrows():
-        start = _date_or_none(row.get("start_date")) if "start_date" in row else None
-        if start is None:
-            continue
         pid = int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1
         sch = _policy_schedule(row, by_policy.get(pid, []))
-        for ym in (range(_ym(start), now + 1) if start <= today else []):
-            if sch["in_force"](ym):
-                rows.append({"date": _date(ym // 12, ym % 12 + 1, 1), "policy": row.get("name"),
-                             "amount": sch["premium_at"](ym) * sch["mult"] / 12})
+        rows += [{"date": d, "policy": row.get("name"), "amount": amt} for d, amt in _payments(sch, today)]
     return pd.DataFrame(rows, columns=["date", "policy", "amount"])
 
 
@@ -317,7 +338,8 @@ def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, ye
 
     per_month / per_year: the premium rate being paid now (revisions applied), zero once lapsed or ended.
     year_cost / months_in_year: what the policy costs in `year` (default this year), pro-rated by the months in force.
-    paid_to_date: cost from the start date until today (or the end date); NaN when no start date was entered."""
+    paid_to_date: the premiums actually paid from the start date until today (or the end date), each on its payment
+    date (a yearly premium is paid in full at the start of each year); NaN when no start date was entered."""
     from datetime import date as _date
     today = today or _date.today()
     year = year or today.year
@@ -348,7 +370,7 @@ def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, ye
         if sch["start"] is not None:
             months = [m for m in range(_ym(sch["start"]), now + 1) if sch["in_force"](m)] \
                 if sch["start"] <= today else []
-            paid, n = sum(sch["premium_at"](m) * sch["mult"] / 12 for m in months), len(months)
+            paid, n = sum(a for _, a in _payments(sch, today)), len(months)
         else:
             paid, n = float("nan"), float("nan")
         rows.append((prem_now, per_year, per_year / 12, paid, n, status))
