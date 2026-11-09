@@ -276,7 +276,7 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     end = l["closed_date"].where(closed, l["end_date"]) if "closed_date" in l else l["end_date"]
 
     l["elapsed_months"] = [whole_months(a, b) for a, b in zip(l["start_date"], end)]
-    # tenure = instalments actually paid when recorded (the first EMI usually falls 1-2 months after disbursal),
+    # tenure = installments actually paid when recorded (the first EMI usually falls 1-2 months after disbursal),
     # otherwise the whole months between the start and closing (or planned end) date
     for c in OPTIONAL_LOAN_COLS:            # "not recorded" must stay NaN, never become 0
         l[c] = pd.to_numeric(l[c], errors="coerce") if c in l else float("nan")

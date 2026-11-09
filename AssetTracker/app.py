@@ -23,9 +23,12 @@ IDEAL, REAL = "#898781", "#2a78d6"
 
 # ------------------------------------------------------------------ helpers
 def style(fig, title, height=340, money=True):
-    fig.update_layout(title=dict(text=title, font=dict(size=14)), height=height, margin=dict(l=0, r=0, t=44, b=0),
+    legend_rows = 1 if len(fig.data) > 1 else 0   # the legend sits between the title and the plot, never on the axis
+    fig.update_layout(title=dict(text=title, font=dict(size=14)), height=height,
+                      margin=dict(l=0, r=0, t=44 + 34 * legend_rows, b=0),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      legend=dict(orientation="h", y=-0.18, x=0), font=dict(color=MUTED))
+                      legend=(dict(orientation="h", yanchor="bottom", y=1.0, x=0) if legend_rows
+                              else dict(orientation="h", y=-0.18, x=0)), font=dict(color=MUTED))
     fig.update_xaxes(showgrid=False, linecolor=MUTED)
     fig.update_yaxes(gridcolor="rgba(137,135,129,0.18)", zeroline=False)
     return fig
@@ -527,9 +530,9 @@ with tabs[4]:
             st.markdown("##### What you paid")
             st.caption("Optional, but it replaces the estimates with your real figures.")
             c = st.columns(4)
-            n_paid = c[0].number_input("Instalments paid", min_value=0, step=1)
-            emi_paid = c[1].number_input("Paid through instalments (₹)", min_value=0.0, step=1000.0, format="%.0f",
-                                         help="Total of all the instalments you paid.")
+            n_paid = c[0].number_input("Installments paid", min_value=0, step=1)
+            emi_paid = c[1].number_input("Paid through installments (₹)", min_value=0.0, step=1000.0, format="%.0f",
+                                         help="Total of all the installments you paid.")
             emi_int = c[2].number_input("…of which interest (₹)", min_value=0.0, step=500.0, format="%.0f")
             closing = c[3].number_input("Paid to close the loan (₹)", min_value=0.0, step=1000.0, format="%.0f",
                                         help="The foreclosure amount, including any charges paid that day.")
@@ -547,7 +550,7 @@ with tabs[4]:
                 elif closed and sd and closed_on and closed_on < sd:
                     st.error("The closing date is before the start date.")
                 elif emi_int > emi_paid:
-                    st.error("Interest within the instalments cannot be more than the instalments paid.")
+                    st.error("Interest within the installments cannot be more than the installments paid.")
                 else:
                     db.insert("loans", {
                         "name": name, "lender": lender, "category": cat, "principal": prin or None,
@@ -571,86 +574,95 @@ with tabs[4]:
                                                  f"{r['interest_rate']:g}% p.a." if pd.notna(r["interest_rate"]) else None] if x))
             h[1].markdown(f":green-badge[Closed]" if closed else ":orange-badge[Active]")
             if closed:
-                st.write("")
-                c = st.columns(3)
-                kpi(c[0], "Item cost", r["asset_cost"], help="Down payment + loan amount")
-                kpi(c[1], "Total you paid", r["total_paid"], help="Down payment + instalments + closing payment")
-                kpi(c[2], "Cost of borrowing", r["cost_of_borrowing"], help="Interest + other charges")
-                st.write("")
-                c = st.columns(3)
-                kpi(c[0], "Interest paid", r["interest_paid"], help="Your actual figure when recorded, else the estimate")
-                kpi(c[1], "Interest saved", r["interest_saved"],
-                    help="Full tenure interest (standard calculator) − interest paid")
-                kpi(c[2], "Saved after other charges", r["net_saved"])
-                st.write("")
-                tl = []
-                if pd.notna(r["tenure_months"]):
-                    unit = "instalments" if pd.notna(r["installments_paid"]) else "months"
-                    ran = f"closed after {int(r['tenure_months'])} {unit}"
-                    if pd.notna(r["planned_months"]):
-                        ran += f" of {int(r['planned_months'])} planned"
-                    tl.append(ran)
-                if pd.notna(r["elapsed_months"]):
-                    tl.append(f"{int(r['elapsed_months'])} months from start to closing")
-                tl.append(f"{r['start_date'] or '–'} → {r['closed_date'] or '–'}")
-                st.caption(" · ".join(tl))
-                rows = [("Down payment", r["down_payment"], "your pocket, day one"),
-                        ("Instalments: principal", r["emi_principal"], "repaid through EMIs"),
-                        ("Instalments: interest", r["emi_interest"] if pd.notna(r["emi_interest"]) else r["interest_est"],
-                         "paid through EMIs" if pd.notna(r["emi_interest"]) else "estimated"),
-                        ("Closing: principal cleared", r["balance_cleared"], "the balance paid off early"),
-                        ("Closing: other charges", r["other_charges"], "processing / foreclosure")]
-                parts = pd.DataFrame(rows, columns=["Part", "Amount", "What"]).dropna(subset=["Amount"])
-                parts = parts[parts["Amount"] > 0]
-                if not parts.empty:
-                    colors = {"Down payment": "#898781", "Instalments: principal": "#1baf7a",
-                              "Instalments: interest": "#eda100", "Closing: principal cleared": "#4c8bf5",
-                              "Closing: other charges": "#d6403a"}
-                    fig = go.Figure()
-                    for _, p in parts.iterrows():
-                        fig.add_bar(y=[r["name"]], x=[p["Amount"]], name=p["Part"], orientation="h",
-                                    marker_color=colors[p["Part"]], text=an.inr(p["Amount"]), textposition="inside",
-                                    hovertemplate=f"{p['Part']}: {an.inr(p['Amount'])} ({p['What']})<extra></extra>")
-                    fig.update_layout(barmode="stack")
-                    fig.update_yaxes(visible=False)
-                    fig.update_xaxes(tickprefix="₹", tickformat="~s")
-                    show(style(fig, "Where your money went", height=230))
-                st.divider()
-                st.markdown("##### How it adds up")
-                if pd.notna(r["interest_full"]):
-                    st.markdown(f"- **Interest:** {_m(r['interest_paid'])} paid vs {_m(r['interest_full'])} "
-                                f"over the full tenure, so {_m(r['interest_saved'])} saved")
-                if pd.notna(r["lender_paid"]):
-                    st.markdown(f"- **Paid to the lender:** {an.inr(r['lender_paid'])} "
-                                f"(instalments {an.inr(r['emi_paid'])} + closing {an.inr(r['closing_payment'])}) "
-                                f"− loan {an.inr(r['principal'])} = **{an.inr(r['lender_extra'])}** "
-                                f"(interest + other charges)")
-                st.markdown(f"- **Closing payment:** {_m(r['closing_payment'])} = "
-                            f"{_m(r['balance_cleared'])} balance + {_m(r['other_charges'])} charges")
-                if pd.notna(r["closing_gap"]) and abs(r["closing_gap"]) > 1:
-                    st.warning(f"The closing payment is {an.inr(abs(r['closing_gap']))} "
-                               f"{'more' if r['closing_gap'] > 0 else 'less'} than balance + charges. "
-                               "Check the instalment total, interest or charges.")
-                if pd.isna(r["emi_interest"]):
-                    st.info("Interest is an estimate. Add instalments paid, the interest in them and the closing "
-                            "payment (edit below) to use your real figures.")
-                st.caption("Interest saved uses the standard reducing-balance EMI formula on the loan amount, rate "
-                           "and planned tenure. It needs the planned end date.")
+                summ = [f"Cost of borrowing {_m(r['cost_of_borrowing'])}"]
+                if pd.notna(r["interest_saved"]):
+                    summ.append(f"interest saved {_m(r['interest_saved'])}")
             else:
-                st.write("")
-                c = st.columns(3)
-                kpi(c[0], "Loan amount", r["principal"])
-                kpi(c[1], "Outstanding", r["outstanding"])
-                kpi(c[2], "EMI per month", r["emi"])
-                st.write("")
-                c = st.columns(3)
-                kpi(c[0], "Other charges", r["other_charges"])
-                kpi(c[1], "Full-tenure interest", r["interest_full"],
-                    help="What the whole tenure would cost at the standard EMI (needs rate and planned end).")
-                kpi(c[2], "Interest rate", f"{r['interest_rate']:g}%" if pd.notna(r["interest_rate"]) else "–")
-                st.write("")
-                st.progress(min(max(r["repaid_pct"] / 100, 0), 1), text=f"{r['repaid_pct']:.0f}% of principal repaid")
-                st.caption(f"{r['start_date'] or '–'} → {r['end_date'] or '–'}")
+                summ = [f"Outstanding {_m(r['outstanding'])}", f"EMI {_m(r['emi'])}/month"]
+            st.markdown(" · ".join(summ))
+            with st.expander("Details", icon=":material/expand_more:"):
+                if closed:
+                    st.write("")
+                    c = st.columns(3)
+                    kpi(c[0], "Item cost", r["asset_cost"], help="Down payment + loan amount")
+                    kpi(c[1], "Total you paid", r["total_paid"], help="Down payment + installments + closing payment")
+                    kpi(c[2], "Cost of borrowing", r["cost_of_borrowing"], help="Interest + other charges")
+                    st.write("")
+                    c = st.columns(3)
+                    kpi(c[0], "Interest paid", r["interest_paid"], help="Your actual figure when recorded, else the estimate")
+                    kpi(c[1], "Interest saved", r["interest_saved"],
+                        help="Full tenure interest (standard calculator) − interest paid")
+                    kpi(c[2], "Saved after other charges", r["net_saved"])
+                    st.write("")
+                    tl = []
+                    if pd.notna(r["tenure_months"]):
+                        unit = "installments" if pd.notna(r["installments_paid"]) else "months"
+                        ran = f"closed after {int(r['tenure_months'])} {unit}"
+                        if pd.notna(r["planned_months"]):
+                            ran += f" of {int(r['planned_months'])} planned"
+                        tl.append(ran)
+                    if pd.notna(r["elapsed_months"]):
+                        tl.append(f"{int(r['elapsed_months'])} months from start to closing")
+                    tl.append(f"{r['start_date'] or '–'} → {r['closed_date'] or '–'}")
+                    st.caption(" · ".join(tl))
+                    rows = [("Down payment", r["down_payment"], "your pocket, day one"),
+                            ("Installments: principal", r["emi_principal"], "repaid through EMIs"),
+                            ("Installments: interest", r["emi_interest"] if pd.notna(r["emi_interest"]) else r["interest_est"],
+                             "paid through EMIs" if pd.notna(r["emi_interest"]) else "estimated"),
+                            ("Closing: principal cleared", r["balance_cleared"], "the balance paid off early"),
+                            ("Closing: other charges", r["other_charges"], "processing / foreclosure")]
+                    parts = pd.DataFrame(rows, columns=["Part", "Amount", "What"]).dropna(subset=["Amount"])
+                    parts = parts[parts["Amount"] > 0]
+                    if not parts.empty:
+                        colors = {"Down payment": "#898781", "Installments: principal": "#1baf7a",
+                                  "Installments: interest": "#eda100", "Closing: principal cleared": "#4c8bf5",
+                                  "Closing: other charges": "#d6403a"}
+                        fig = go.Figure()
+                        for _, p in parts.iterrows():
+                            fig.add_bar(y=[r["name"]], x=[p["Amount"]], name=f"{p['Part']}  {an.inr(p['Amount'])}",
+                                        orientation="h", marker_color=colors[p["Part"]],
+                                        hovertemplate=f"{p['Part']}: {an.inr(p['Amount'])} ({p['What']})<extra></extra>")
+                        fig.update_layout(barmode="stack")
+                        fig.update_yaxes(visible=False)
+                        fig.update_xaxes(tickprefix="₹", tickformat="~s")
+                        show(style(fig, "Where your money went", height=240).update_layout(
+                        legend=dict(orientation="v", x=1.02, y=0.5, yanchor="middle"), margin=dict(l=0, r=0, t=44, b=0)))
+                    st.divider()
+                    st.markdown("##### How it adds up")
+                    if pd.notna(r["interest_full"]):
+                        st.markdown(f"- **Interest:** {_m(r['interest_paid'])} paid vs {_m(r['interest_full'])} "
+                                    f"over the full tenure, so {_m(r['interest_saved'])} saved")
+                    if pd.notna(r["lender_paid"]):
+                        st.markdown(f"- **Paid to the lender:** {an.inr(r['lender_paid'])} "
+                                    f"(installments {an.inr(r['emi_paid'])} + closing {an.inr(r['closing_payment'])}) "
+                                    f"− loan {an.inr(r['principal'])} = **{an.inr(r['lender_extra'])}** "
+                                    f"(interest + other charges)")
+                    st.markdown(f"- **Closing payment:** {_m(r['closing_payment'])} = "
+                                f"{_m(r['balance_cleared'])} balance + {_m(r['other_charges'])} charges")
+                    if pd.notna(r["closing_gap"]) and abs(r["closing_gap"]) > 1:
+                        st.warning(f"The closing payment is {an.inr(abs(r['closing_gap']))} "
+                                   f"{'more' if r['closing_gap'] > 0 else 'less'} than balance + charges. "
+                                   "Check the installment total, interest or charges.")
+                    if pd.isna(r["emi_interest"]):
+                        st.info("Interest is an estimate. Add installments paid, the interest in them and the closing "
+                                "payment (edit below) to use your real figures.")
+                    st.caption("Interest saved uses the standard reducing-balance EMI formula on the loan amount, rate "
+                               "and planned tenure. It needs the planned end date.")
+                else:
+                    st.write("")
+                    c = st.columns(3)
+                    kpi(c[0], "Loan amount", r["principal"])
+                    kpi(c[1], "Outstanding", r["outstanding"])
+                    kpi(c[2], "EMI per month", r["emi"])
+                    st.write("")
+                    c = st.columns(3)
+                    kpi(c[0], "Other charges", r["other_charges"])
+                    kpi(c[1], "Full-tenure interest", r["interest_full"],
+                        help="What the whole tenure would cost at the standard EMI (needs rate and planned end).")
+                    kpi(c[2], "Interest rate", f"{r['interest_rate']:g}%" if pd.notna(r["interest_rate"]) else "–")
+                    st.write("")
+                    st.progress(min(max(r["repaid_pct"] / 100, 0), 1), text=f"{r['repaid_pct']:.0f}% of principal repaid")
+                    st.caption(f"{r['start_date'] or '–'} → {r['end_date'] or '–'}")
         st.write("")
 
     if loans_total > 0:
@@ -678,11 +690,11 @@ with tabs[4]:
             "emi": money_cfg("EMI (₹)"), "start_date": st.column_config.DateColumn("Started"),
             "end_date": st.column_config.DateColumn("Planned end"),
             "closed_date": st.column_config.DateColumn("Closed on"),
-            "installments_paid": st.column_config.NumberColumn("Instalments paid", min_value=0, step=1, format="%d"),
-            "emi_paid": money_cfg("Paid via instalments (₹)"), "emi_interest": money_cfg("…interest in them (₹)"),
+            "installments_paid": st.column_config.NumberColumn("Installments paid", min_value=0, step=1, format="%d"),
+            "emi_paid": money_cfg("Paid via installments (₹)"), "emi_interest": money_cfg("…interest in them (₹)"),
             "closing_payment": money_cfg("Paid to close (₹)"),
             "tenure_months": st.column_config.NumberColumn("Tenure (months)", disabled=True, format="%d",
-                                                           help="Instalments paid when recorded, otherwise whole months from start to closing (or planned end)."),
+                                                           help="Installments paid when recorded, otherwise whole months from start to closing (or planned end)."),
             "link": st.column_config.LinkColumn("Documents", display_text="Open"),
             "details": st.column_config.TextColumn("Details", width="large")}, ("name", "category"), "loans",
             to_db=lambda e: e.drop(columns="tenure_months").assign(
