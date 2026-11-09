@@ -225,6 +225,23 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
         l[c] = num(l[c])
     l["repaid_pct"] = ((l["principal"] - l["outstanding"]) / l["principal"].where(l["principal"] > 0)).fillna(0.0) * 100
     l["repaid_pct"] = l["repaid_pct"].clip(0, 100)
+    if "status" not in l:
+        l["status"] = "Active"
+    l["status"] = l["status"].where(l["status"].isin(db.LOAN_STATUSES), "Active")
+    closed = l["status"] == "Closed"
+    l.loc[closed, "outstanding"] = 0.0          # a closed loan owes nothing, whatever was typed
+    l.loc[closed, "repaid_pct"] = 100.0
+    l.loc[closed, "emi"] = 0.0                  # and costs no EMI going forward
+    end = l["closed_date"].where(closed, l["end_date"]) if "closed_date" in l else l["end_date"]
+
+    def months(a, b):
+        try:
+            if a is None or b is None or pd.isna(a) or pd.isna(b):
+                return None
+            return max(0, (b.year - a.year) * 12 + (b.month - a.month))
+        except AttributeError:
+            return None
+    l["tenure_months"] = [months(a, b) for a, b in zip(l["start_date"], end)]
     return l
 
 
@@ -329,6 +346,9 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
                   f"- Lender: {r['lender'] or '–'}",
                   f"- Principal: {inr(r['principal'])} · Outstanding: {inr(r['outstanding'])} "
                   f"({r['repaid_pct']:.0f}% repaid)",
+                  f"- Status: {r['status']}"
+                  + (f" (closed {r['closed_date']})" if r['status'] == 'Closed' and r['closed_date'] else "")
+                  + (f" · Tenure: {int(r['tenure_months'])} months" if pd.notna(r['tenure_months']) else ""),
                   f"- Interest rate: {r['interest_rate']:g}% · EMI: {inr(r['emi'])}",
                   f"- Start: {r['start_date'] or '–'} · End: {r['end_date'] or '–'}"]
         if r["link"]:
