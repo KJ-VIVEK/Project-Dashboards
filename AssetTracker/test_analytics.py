@@ -522,7 +522,7 @@ def test_policy_status_active_inactive_not_started():
                      _policy(id=4, start_date=date(2027, 1, 1))], ignore_index=True)
     f = an.insurance_frame(ins, today=TODAY)
     assert list(f["status"]) == ["Active", "Inactive", "Inactive", "Not started"]
-    assert list(f["per_year"] == 0) == [False, True, True, False]
+    assert list(f["per_year"] == 0) == [False, True, True, True]
 
 
 def test_premiums_paid_are_tracked_monthly_and_subtracted_from_income():
@@ -541,3 +541,72 @@ def test_premiums_paid_are_tracked_monthly_and_subtracted_from_income():
     assert set(f["source"]) == {"Salary", db.PREMIUM_SOURCE} and (f[f.source == db.PREMIUM_SOURCE]["amount"] < 0).all()
     assert an.income_pivot(f, None, by="year").loc[db.PREMIUM_SOURCE, 2026] == -5500
     assert an.income_frame(inc, empty, empty, True)["amount"].sum() == 100000    # off by default
+
+
+# ---------------------------------------------------------------- vehicle insurance: OD + TP as covers of one policy
+def _vehicle(today=TODAY):
+    od_old = {"id": 2, "parent_id": 1, "component": "Own Damage (OD)", "name": "Bike - OD", "premium": 6000.0,
+              "frequency": db.ONE_TIME, "start_date": date(2024, 3, 10), "end_date": date(2025, 3, 9), "active": True}
+    od_new = {"id": 3, "parent_id": 1, "component": "Own Damage (OD)", "name": "Bike - OD", "premium": 7200.0,
+              "frequency": db.ONE_TIME, "start_date": date(2026, 3, 10), "end_date": date(2027, 3, 9), "active": True}
+    tp = {"id": 4, "parent_id": 1, "component": "Third Party (TP)", "name": "Bike - TP", "premium": 6000.0,
+          "frequency": db.ONE_TIME, "start_date": date(2024, 3, 10), "end_date": date(2029, 3, 9), "active": True}
+    parent = {"id": 1, "parent_id": None, "component": None, "name": "Bike", "premium": 0.0, "frequency": "Yearly",
+              "start_date": None, "end_date": None, "active": True, "sum_assured": 90000.0}
+    return pd.DataFrame([parent, od_old, od_new, tp])
+
+
+def test_one_year_policy_covers_twelve_months_not_thirteen():
+    p = _policy(premium=12000.0, frequency=db.ONE_TIME, start_date=date(2025, 3, 10), end_date=date(2026, 3, 9))
+    f = an.insurance_frame(p, year=2025, today=TODAY).iloc[0]
+    assert f["months_in_year"] == 10 and f["year_cost"] == pytest.approx(10000)      # Mar..Dec at 1,000 a month
+    assert an.insurance_frame(p, year=2026, today=TODAY).iloc[0]["year_cost"] == pytest.approx(2000)   # Jan, Feb
+    assert an.insurance_frame(p, today=TODAY).iloc[0]["paid_to_date"] == pytest.approx(12000)          # fully paid
+    assert an.insurance_frame(p, today=TODAY).iloc[0]["status"] == "Inactive"
+
+
+def test_od_is_renewed_yearly_and_tp_runs_long_as_covers_of_one_policy():
+    v = an.insurance_frame(_vehicle(), year=2026, today=TODAY)
+    od_old, od_new, tp = v.iloc[1], v.iloc[2], v.iloc[3]
+    assert od_old["status"] == "Inactive" and od_new["status"] == "Active" and tp["status"] == "Active"
+    assert tp["per_year"] == pytest.approx(6000 / 60 * 12)                            # 5-year premium, per year 1,200
+    assert od_new["per_year"] == pytest.approx(7200)
+    assert od_old["paid_to_date"] == pytest.approx(6000)
+    assert od_new["paid_to_date"] == pytest.approx(7200 / 12 * 9)                     # Mar..Nov 2026
+    assert tp["paid_to_date"] == pytest.approx(6000 / 60 * 33)                        # Mar 2024..Nov 2026
+    # 2026: TP all 12 months at 100, new OD Mar-Dec (10 months at 600), old OD ended in Feb 2025 so nothing
+    assert v["year_cost"].sum() == pytest.approx(1200 + 6000)
+    assert v.iloc[0]["per_year"] == 0                                                # the parent adds nothing itself
+    pol = an.insurance_policies(v)
+    assert len(pol) == 1 and pol.iloc[0]["name"] == "Bike" and pol.iloc[0]["status"] == "Active"
+    assert pol.iloc[0]["paid_to_date"] == pytest.approx(6000 + 5400 + 3300)
+    assert pol.iloc[0]["per_year"] == pytest.approx(1200 + 7200) and pol.iloc[0]["n_covers"] == 3
+    assert "Third Party (TP)" in pol.iloc[0]["covers"] and "Own Damage (OD)" in pol.iloc[0]["covers"]
+
+
+def test_policy_is_inactive_only_when_every_cover_has_ended_and_premiums_reach_income():
+    v = _vehicle()
+    v.loc[v["id"] != 1, "end_date"] = date(2026, 1, 31)
+    pol = an.insurance_policies(an.insurance_frame(v, today=TODAY))
+    assert pol.iloc[0]["status"] == "Inactive" and pol.iloc[0]["per_year"] == 0
+    pay = an.insurance_payments(_vehicle(), None, today=TODAY)
+    assert pay["amount"].sum() == pytest.approx(6000 + 5400 + 3300)
+
+
+def test_deleting_a_policy_removes_its_covers(path):
+    pid = db.insert("insurance", {"name": "Bike", "premium": 0, "frequency": "Yearly", "active": True}, path)
+    cid = db.insert("insurance", {"name": "Bike - TP", "premium": 5, "frequency": db.ONE_TIME, "active": True,
+                                  "parent_id": pid, "component": "Third Party (TP)"}, path)
+    db.insert("insurance_revisions", {"insurance_id": cid, "effective_from": date(2026, 1, 1), "premium": 6}, path)
+    db.delete_row("insurance", pid, path)
+    assert db.get_table("insurance", path).empty and db.get_table("insurance_revisions", path).empty
+
+
+def test_a_renewal_that_has_not_started_does_not_double_the_current_rate():
+    v = _vehicle()
+    v = pd.concat([v, pd.DataFrame([{**v.iloc[2].to_dict(), "id": 5, "premium": 9999.0,
+                                     "start_date": date(2027, 3, 10), "end_date": date(2028, 3, 9)}])],
+                  ignore_index=True)
+    f = an.insurance_frame(v, today=TODAY)
+    assert f.iloc[4]["status"] == "Not started" and f.iloc[4]["per_year"] == 0
+    assert an.insurance_policies(f).iloc[0]["per_year"] == pytest.approx(1200 + 7200)

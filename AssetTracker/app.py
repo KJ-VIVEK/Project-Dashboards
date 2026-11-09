@@ -448,9 +448,10 @@ with tabs[3]:
                             help="Premiums are shown per year, spread over the months each policy is in force: "
                                  "premium × payments per year × months in force ÷ 12.")
     ins_y = an.insurance_frame(insurance, ins_rev, year=ins_year)
-    act = ins_y[ins_y["status"] == "Active"]
+    pol = an.insurance_policies(ins_y)          # one row per policy; OD / TP covers rolled into their policy
+    act = pol[pol["status"] == "Active"]
     c = st.columns(3)
-    kpi(c[0], "Policies", f"{len(act)} active · {int((ins_y['status'] == 'Inactive').sum())} inactive")
+    kpi(c[0], "Policies", f"{len(act)} active · {int((pol['status'] == 'Inactive').sum())} inactive")
     kpi(c[1], "Premium per month (now)", ins_y["per_month"].sum(), help="The rate being paid today, after any premium change.")
     kpi(c[2], "Premium per year (now)", ins_y["per_year"].sum(), help="Today's rate for a full year.")
     st.write("")
@@ -461,12 +462,12 @@ with tabs[3]:
         help="From each policy's start date until today (or its end date). Needs a start date.")
     kpi(c[2], "Total cover", an.num(act["sum_assured"]).sum())
     st.write("")
-    due = act.copy()
+    due = ins_y[ins_y["status"] == "Active"].copy()
     due["_d"] = pd.to_datetime(due["next_due"], errors="coerce")
     soon = due[(due["_d"] >= pd.Timestamp(date.today())) & (due["_d"] <= pd.Timestamp(date.today()) + pd.Timedelta(days=30))]
     for _, r in soon.iterrows():
         st.warning(f"{r['name']}: premium {an.inr(r['premium_now'])} due {r['next_due']}")
-    undated = ins_y[~ins_y["active"].astype(bool) & ins_y["end_date"].isna()]["name"].tolist()
+    undated = pol[~pol["active"].astype(bool) & pol["end_date"].isna() & (pol["n_covers"] == 0)]["name"].tolist()
     if undated:
         st.info("Lapsed policies without an end date count for nothing in any year: " + ", ".join(undated) +
                 ". Add an end date to count the premiums you paid.")
@@ -486,25 +487,83 @@ with tabs[3]:
             c = st.columns(3)
             prem = c[0].number_input("Premium each time (₹)", min_value=0.0, step=500.0, format="%.2f",
                                      help="The amount you pay per payment, e.g. per month for a monthly policy.")
-            freq = c[1].selectbox("Paid", list(db.FREQUENCIES), index=3)
+            freq = c[1].selectbox("Paid", db.FREQUENCY_OPTIONS, index=3,
+                                  help=f"“{db.ONE_TIME}”: one premium that covers the whole start-to-end period.")
             nxt = dinput(c[2], "Next due", value=None)
             st.markdown("##### Period")
             c = st.columns(3)
             p_start = dinput(c[0], "Start date", value=None)
             p_end = dinput(c[1], "End date", value=None, help="Leave empty while the policy is running.")
+            st.markdown("##### Vehicle insurance: Own Damage and Third Party (optional)")
+            st.caption("Vehicle policies have two parts under one policy: OD, renewed every year, and TP, which runs "
+                       "for several years. Fill these instead of the premium above; each part keeps its own premium and "
+                       "period. Renew or add parts later in “Add a cover to a policy”.")
+            covers = {}
+            for key, label in (("od", "Own Damage (OD)"), ("tp", "Third Party (TP)")):
+                c = st.columns(4)
+                covers[key] = (label, c[0].number_input(f"{label} premium (₹)", min_value=0.0, step=500.0,
+                                                        format="%.2f", key=f"new_{key}_p"),
+                               c[1].selectbox(f"{label} paid", db.FREQUENCY_OPTIONS, index=4, key=f"new_{key}_f"),
+                               dinput(c[2], f"{label} start", value=None, key=f"new_{key}_s"),
+                               dinput(c[3], f"{label} end", value=None, key=f"new_{key}_e"))
             st.write("")
             if st.form_submit_button("Add policy", type="primary"):
-                if not name.strip() or prem <= 0:
-                    st.error("A name and a premium above zero are needed.")
+                used = {k: v for k, v in covers.items() if v[1] > 0}
+                bad = [v[0] for v in used.values() if v[3] and v[4] and v[4] < v[3]]
+                if not name.strip() or (prem <= 0 and not used):
+                    st.error("A name and a premium above zero (or an OD / TP premium) are needed.")
                 elif p_start and p_end and p_end < p_start:
                     st.error("The end date is before the start date.")
+                elif bad:
+                    st.error("The end date is before the start date for: " + ", ".join(bad))
+                elif used and any(not (v[3] and v[4]) for v in used.values() if v[2] == db.ONE_TIME):
+                    st.error("A one-time premium needs both a start and an end date.")
                 else:
-                    db.insert("insurance", {"name": name, "type": typ, "provider": prov, "policy_no": pno,
-                                            "sum_assured": cover or None, "premium": prem, "frequency": freq,
-                                            "next_due": nxt, "link": link, "active": True,
-                                            "start_date": p_start, "end_date": p_end})
+                    pid = db.insert("insurance", {"name": name, "type": typ, "provider": prov, "policy_no": pno,
+                                                  "sum_assured": cover or None, "premium": 0 if used else prem,
+                                                  "frequency": "Yearly" if used else freq, "next_due": nxt,
+                                                  "link": link, "active": True,
+                                                  "start_date": None if used else p_start,
+                                                  "end_date": None if used else p_end})
+                    for label, cp, cf, cs, ce in used.values():
+                        db.insert("insurance", {"name": f"{name} · {label}", "type": typ, "provider": prov,
+                                                "policy_no": pno, "premium": cp, "frequency": cf, "start_date": cs,
+                                                "end_date": ce, "active": True, "parent_id": pid, "component": label})
                     flash("Policy added.")
                     st.rerun()
+
+    with st.expander("Add a cover to a policy (OD, TP, renewal)", icon=":material/shield:"):
+        st.caption("Renew the yearly Own Damage cover, add a multi-year Third Party cover, or any add-on. It is "
+                   "counted under the same policy.")
+        roots = insurance[insurance["parent_id"].isna()] if "parent_id" in insurance else insurance
+        if roots.empty:
+            st.write("Add a policy first.")
+        else:
+            with st.form("add_cover", clear_on_submit=True, border=False):
+                rn = {int(r["id"]): r["name"] for _, r in roots.iterrows()}
+                c = st.columns(3)
+                cpid = c[0].selectbox("Policy", list(rn), format_func=rn.get, key="cover_policy")
+                ctype = c[1].selectbox("Cover", db.COVER_TYPES, key="cover_type")
+                cprem = c[2].number_input("Premium (₹)", min_value=0.0, step=500.0, format="%.2f", key="cover_prem")
+                c = st.columns(3)
+                cfreq = c[0].selectbox("Paid", db.FREQUENCY_OPTIONS, index=4, key="cover_freq")
+                cs = dinput(c[1], "Start date", value=None, key="cover_s")
+                ce = dinput(c[2], "End date", value=None, key="cover_e")
+                if st.form_submit_button("Add cover", type="primary"):
+                    if cprem <= 0 or cs is None:
+                        st.error("A premium above zero and a start date are needed.")
+                    elif ce and ce < cs:
+                        st.error("The end date is before the start date.")
+                    elif cfreq == db.ONE_TIME and ce is None:
+                        st.error("A one-time premium needs an end date.")
+                    else:
+                        par = roots[roots["id"] == cpid].iloc[0]
+                        db.insert("insurance", {"name": f"{par['name']} · {ctype}", "type": par["type"],
+                                                "provider": par["provider"], "policy_no": par["policy_no"],
+                                                "premium": cprem, "frequency": cfreq, "start_date": cs, "end_date": ce,
+                                                "active": True, "parent_id": cpid, "component": ctype})
+                        flash(f"{ctype} added to {par['name']}.")
+                        st.rerun()
 
     with st.expander("Premium changed? Record the new amount", icon=":material/price_change:"):
         st.caption("Keep the same policy and say from when the amount to pay changed (a tax change, a repricing…). "
@@ -552,15 +611,29 @@ with tabs[3]:
     if not ins_y.empty:
         dots = {"Active": "🟢 Active", "Inactive": "⚪ Inactive", "Not started": "🟡 Not started"}
         order = {"Active": 0, "Not started": 1, "Inactive": 2}
-        g = ins_y.assign(_o=ins_y["status"].map(order)).sort_values(["_o", "name"])
-        t = pd.DataFrame({"Policy": g["name"], "Status": g["status"].map(dots),
+        g = pol.assign(_o=pol["status"].map(order)).sort_values(["_o", "name"])
+        t = pd.DataFrame({"Policy": g["name"], "Status": g["status"].map(dots), "Covers": g["covers"].replace("", "–"),
                           "Premium paid": g["paid_to_date"].map(lambda v: "–" if pd.isna(v) else an.inr(v)),
                           "Insurance amount": an.num(g["sum_assured"]).map(an.inr)})
         st.markdown("##### Policies")
         st.dataframe(t, hide_index=True, width="stretch")
         st.caption("Premium paid is the total since the policy started, with premium changes applied. "
-                   "Active means the policy is running today.")
-        nodate = ins_y[ins_y["paid_to_date"].isna()]["name"].tolist()
+                   "Active means the policy is running today. A policy made of covers (OD / TP) is active while any "
+                   "cover is.")
+        kids = ins_y[ins_y["parent_id"].notna()]
+        if not kids.empty:
+            with st.expander("Covers of each policy (OD, TP)", icon=":material/shield:"):
+                pn = dict(zip(insurance["id"], insurance["name"]))
+                kt = pd.DataFrame({
+                    "Policy": kids["parent_id"].map(pn), "Cover": kids["component"], "Status": kids["status"].map(dots),
+                    "From": kids["start_date"], "To": kids["end_date"], "Premium": kids["premium_now"].map(an.inr),
+                    "Premium covers": kids["frequency"], "Per year": kids["per_year"].map(an.inr),
+                    "Paid to date": kids["paid_to_date"].map(lambda v: "–" if pd.isna(v) else an.inr(v))}
+                ).sort_values(["Policy", "Cover", "From"])
+                st.dataframe(kt, hide_index=True, width="stretch")
+                st.caption("A one-time premium covers its whole period and is spread over those months, so a "
+                           "5-year Third Party premium shows as one fifth of it per year.")
+        nodate = pol[pol["paid_to_date"].isna()]["name"].tolist()
         if nodate:
             st.info("No start date, so no premium history: " + ", ".join(nodate) +
                     ". Add a start date to count what you paid (it is also subtracted from income on the Summary).")
@@ -571,8 +644,9 @@ with tabs[3]:
             "type": st.column_config.SelectboxColumn("Type", options=db.INSURANCE_TYPES),
             "provider": "Provider", "policy_no": "Policy no.", "sum_assured": money_cfg("Sum assured (₹)"),
             "premium": money_cfg("Starting premium (₹)", required=True),
-            "frequency": st.column_config.SelectboxColumn("Paid", options=list(db.FREQUENCIES), required=True),
-            "next_due": dcol("Next due"),
+            "frequency": st.column_config.SelectboxColumn("Paid", options=db.FREQUENCY_OPTIONS, required=True),
+            "next_due": dcol("Next due"), "parent_id": None,
+            "component": st.column_config.SelectboxColumn("Cover", options=db.COVER_TYPES),
             "start_date": dcol("Start"), "end_date": dcol("End"),
             "link": st.column_config.LinkColumn("Policy link", display_text="Open"), "notes": "Notes",
             "active": st.column_config.CheckboxColumn("Active")}, ("name", "premium", "frequency"), "insurance",
