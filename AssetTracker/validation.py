@@ -26,7 +26,7 @@ LABELS = {
     "gst": "GST", "cost": "Cost", "area_sqft": "Area", "registration": "Registration", "brokerage": "Brokerage",
     "monthly_rent": "Rent per month", "current_per_sqft": "Current price per sq ft", "purchase_date": "Purchased on",
     "maturity_date": "Maturity date", "target": "Goal target", "title": "Title", "description": "Description",
-    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF or NPS or Vouchers or Insurance", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
+    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF or NPS or Vouchers or Insurance", "tax_pct": "Extra tax %", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
     "rsu_sell_price": "Sell price", "rsu_sell_date": "Sell date", "rsu_sell_fx": "USD to INR on the sell date",
 }
 
@@ -34,7 +34,8 @@ LABELS = {
 # ("in", options), ("int",) whole number
 RULES: dict[str, dict[str, tuple]] = {
     "income": {"source": ("in", db.INCOME_SOURCES), "tax_paid": (">=", 0), "other_deductions": (">=", 0), "rsu_qty": (">=", 0), "rsu_buy_price": (">=", 0),
-               "rsu_sold_qty": (">=", 0), "rsu_sell_price": (">=", 0), "rsu_sell_fx": (">=", 0)},
+               "rsu_sold_qty": (">=", 0), "rsu_sell_price": (">=", 0), "rsu_sell_fx": (">=", 0),
+               "tax_pct": ("between", 0, 100)},
     "savings": {"kind": ("in", db.SAVINGS_KINDS), "amount": (">=", 0), "interest_rate": ("between", 0, 100),
                 "target": (">=", 0)},
     "insurance": {"premium": (">", 0), "sum_assured": (">=", 0), "frequency": ("in", db.FREQUENCY_OPTIONS),
