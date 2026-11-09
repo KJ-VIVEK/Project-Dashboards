@@ -81,9 +81,13 @@ def main(out, reset):
 
     ins("insurance", {"name": "Term Plan", "type": "Term Life", "provider": "HDFC Life", "policy_no": "TL-0001",
                       "sum_assured": 20000000, "premium": 18000, "frequency": "Yearly",
-                      "next_due": today + timedelta(days=20), "link": "https://example.com/term.pdf", "active": True})
+                      "next_due": today + timedelta(days=20), "link": "https://example.com/term.pdf", "active": True,
+                      "start_date": date(2022, 4, 1)})
+    ins("insurance_revisions", {"insurance_id": 1, "effective_from": date(today.year, 4, 1), "premium": 15000,
+                                "note": "Tax change"})
     ins("insurance", {"name": "Family Floater", "type": "Health", "provider": "Star Health", "sum_assured": 1000000,
-                      "premium": 1800, "frequency": "Monthly", "link": "https://example.com/health", "active": True})
+                      "premium": 1800, "frequency": "Monthly", "link": "https://example.com/health", "active": True,
+                      "start_date": date(today.year, 7, 1)})
 
     ins("loans", {"name": "Home loan", "lender": "SBI", "category": "Good", "principal": 4500000,
                   "outstanding": 3900000, "interest_rate": 8.5, "emi": 39000, "start_date": date(2023, 4, 1),
