@@ -810,6 +810,9 @@ def test_inflow_by_year_and_yoy_change():
     assert y.loc[2025, "net"] == 0 and y.loc[2025, "yoy_pct"] == -100.0      # a missing year is shown as zero
     assert pd.isna(y.loc[2026, "yoy_pct"])                       # no % from a zero year
     assert an.inflow_by_year(an.income_frame(inc.iloc[0:0], d, r)).empty
+    # growth of each series: gross 1000 -> 1400 (+40%), tax 200 -> 300 (+50%), after tax 800 -> 1100 (+37.5%)
+    assert round(y.loc[2024, "gross_yoy_pct"], 6) == 40.0 and round(y.loc[2024, "tax_yoy_pct"], 6) == 50.0
+    assert pd.isna(y.loc[2023, "gross_yoy_pct"]) and pd.isna(y.loc[2026, "tax_yoy_pct"])
 
 
 def test_memo_row_shows_epf_nps_per_month_and_year_without_touching_totals():
