@@ -637,3 +637,20 @@ def test_policy_summary_lists_only_covers_still_running():
     v = an.insurance_frame(_vehicle(), today=TODAY)
     s = an.insurance_policies(v).iloc[0]["covers"]
     assert "Third Party" in s and s.count("Own Damage") == 1                  # the ended OD is not listed
+
+
+def test_each_cover_has_its_own_sum_insured_and_the_policy_shows_the_running_ones():
+    v = _vehicle()
+    v.loc[v["id"] == 2, "sum_assured"] = 80000.0      # old OD (ended)
+    v.loc[v["id"] == 3, "sum_assured"] = 70000.0      # current OD / IDV
+    v.loc[v["id"] == 4, "sum_assured"] = 750000.0     # TP
+    f = an.insurance_frame(v, today=TODAY)
+    pol = an.insurance_policies(f).iloc[0]
+    assert pol["sum_assured"] == 820000                # 70,000 + 750,000: ended covers insure nothing now
+    assert "OD" in pol["insured"] and "TP" in pol["insured"] and "7,50,000" in pol["insured"]
+    assert "80,000" not in pol["insured"].replace("7,50,000", "")
+    terms = an.insurance_terms(f[f["parent_id"] == 1])
+    assert terms["od_sum"].tolist() == [70000, 80000] and terms["tp_sum"].iloc[1] == 750000
+    # covers with no amount of their own fall back to the policy's amount (older data)
+    old = an.insurance_policies(an.insurance_frame(_vehicle(), today=TODAY)).iloc[0]
+    assert old["sum_assured"] == 90000
