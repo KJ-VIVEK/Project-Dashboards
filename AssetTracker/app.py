@@ -44,8 +44,6 @@ def dinput(container, label, value=None, key=None, help=None):
     PARTIAL.pop(label, None)
     key = key or f"dt{inspect.currentframe().f_back.f_lineno}_{label}"
     container.markdown(f"<div style='font-size:14px;margin-bottom:-6px'>{label}</div>", unsafe_allow_html=True)
-    if help:
-        container.caption(help)
     c = container.columns([1, 1.2, 1.3])
     blank = "-"
     years = list(range(DATE_MIN.year, DATE_MAX.year + 1))
@@ -56,6 +54,8 @@ def dinput(container, label, value=None, key=None, help=None):
     day = c[0].selectbox("Day", d_opts, index=pre(d_opts, value.day if value else None), key=key + "_d", label_visibility="collapsed")
     mon = c[1].selectbox("Month", m_opts, index=pre(m_opts, MONTHS[value.month - 1] if value else None), key=key + "_m", label_visibility="collapsed")
     yr = c[2].selectbox("Year", y_opts, index=pre(y_opts, value.year if value else None), key=key + "_y", label_visibility="collapsed")
+    if help:
+        container.caption(help)
     if blank in (day, mon, yr):
         if not (day == mon == yr == blank):
             container.caption("Pick day, month and year, or leave all three as -.")
