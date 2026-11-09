@@ -290,90 +290,6 @@ def insurance_monthly(ins: pd.DataFrame, revisions: pd.DataFrame | None, year: i
     return out
 
 
-def _short(component, fallback) -> str:
-    """'Own Damage (OD)' -> 'OD', 'Third Party (TP)' -> 'TP'; other covers keep their name."""
-    c = component if isinstance(component, str) else str(fallback)
-    return c[c.rfind("(") + 1:c.rfind(")")] if "(" in c and c.endswith(")") else c
-
-
-def insurance_policies(frame: pd.DataFrame) -> pd.DataFrame:
-    """One row per policy. A policy made of covers (vehicle insurance: Own Damage + Third Party) takes its status,
-    premiums and amounts from its covers; a plain policy is itself. `covers` is a short text of each cover's state."""
-    f = frame.copy()
-    parents = f[f["parent_id"].isna()]
-    out = []
-    for _, p in parents.iterrows():
-        kids = f[f["parent_id"] == p["id"]]
-        rows = kids if len(kids) else p.to_frame().T
-        order = {"Active": 0, "Not started": 1, "Inactive": 2}
-        status = min(rows["status"], key=lambda x: order.get(x, 3))
-        paid = pd.to_numeric(rows["paid_to_date"], errors="coerce")
-        d = p.to_dict()
-        d.update(status=status, n_covers=len(kids),
-                 paid_to_date=float(paid.sum()) if paid.notna().any() else float("nan"),
-                 **{c: float(pd.to_numeric(rows[c], errors="coerce").fillna(0).sum())
-                    for c in ("per_year", "per_month", "year_cost")})
-        live_sum = pd.to_numeric(kids.loc[kids["status"] == "Active", "sum_assured"], errors="coerce") if len(kids) else None
-        if live_sum is not None and pd.to_numeric(kids["sum_assured"], errors="coerce").notna().any():
-            d["sum_assured"] = float(live_sum.fillna(0).sum())      # each cover insures its own amount
-        d["insured"] = " · ".join(
-            f"{_short(k['component'], k['name'])} {inr(k['sum_assured'])}"
-            for _, k in kids[kids["status"] == "Active"].sort_values("start_date", na_position="first").iterrows()
-            if pd.notna(pd.to_numeric(k["sum_assured"], errors="coerce")))
-        live = kids[kids["status"] != "Inactive"].sort_values("start_date", na_position="first")
-        d["covers"] = (" · ".join(
-            f"{(k['component'] if isinstance(k['component'], str) else k['name'])} ({k['status'].lower()}"
-            + (f", to {k['end_date']}" if hasattr(k["end_date"], "year") and pd.notna(k["end_date"]) else "") + ")"
-            for _, k in live.iterrows()) or ("all covers ended" if len(kids) else ""))
-        out.append(d)
-    return pd.DataFrame(out, columns=list(f.columns) + ["n_covers", "covers", "insured"])
-
-
-def renewal_end(start):
-    """A one-year term's last day: the day before the next anniversary (10 Mar 2026 -> 9 Mar 2027)."""
-    from datetime import date as _date, timedelta
-    try:
-        nxt = _date(start.year + 1, start.month, start.day)
-    except ValueError:                      # 29 Feb
-        nxt = _date(start.year + 1, 3, 1)
-    return nxt - timedelta(days=1)
-
-
-def insurance_terms(covers: pd.DataFrame) -> pd.DataFrame:
-    """The renewals of one motor policy. Covers that start together on the same policy number form one term, with its
-    Own Damage and Third Party premiums side by side (a 5-year TP bought in the first term simply has no TP premium in
-    the later ones)."""
-    if covers.empty:
-        return pd.DataFrame(columns=["from", "to", "policy_no", "od", "tp", "other", "total", "od_sum", "tp_sum", "status"])
-    c = covers.copy()
-    for col in ("policy_no", "sum_assured"):
-        if col not in c:
-            c[col] = None
-    c["_key"] = c["start_date"].astype(str) + "|" + c["policy_no"].fillna("").astype(str)
-    order = {"Active": 0, "Not started": 1, "Inactive": 2}
-    rows = []
-    for _, g in c.groupby("_key", sort=False):
-        def tot(tag):
-            return float(g.loc[g["component"].fillna("").str.contains(tag, regex=False), "premium_now"].sum()) \
-                if g["component"].fillna("").str.contains(tag, regex=False).any() else float("nan")
-        od, tp = tot("(OD)"), tot("(TP)")
-        known = g["component"].fillna("").str.contains("(OD)", regex=False) | g["component"].fillna("").str.contains("(TP)", regex=False)
-        other = float(g.loc[~known, "premium_now"].sum()) if (~known).any() else float("nan")
-        total = float(g["premium_now"].sum())
-
-        def insured(tag):
-            m = g["component"].fillna("").str.contains(tag, regex=False)
-            v = pd.to_numeric(g.loc[m, "sum_assured"], errors="coerce") if "sum_assured" in g else None
-            return float(v.sum()) if v is not None and v.notna().any() else float("nan")
-        ends = [e for e in g["end_date"] if hasattr(e, "year") and pd.notna(e)]
-        rows.append({"from": g["start_date"].iloc[0], "to": max(ends) if ends else None,
-                     "policy_no": g["policy_no"].iloc[0] if isinstance(g["policy_no"].iloc[0], str) else "",
-                     "od": od, "tp": tp, "other": other, "total": total,
-                     "od_sum": insured("(OD)"), "tp_sum": insured("(TP)"),
-                     "status": min(g["status"], key=lambda x: order.get(x, 3))})
-    return pd.DataFrame(rows).sort_values("from", ascending=False, na_position="last").reset_index(drop=True)
-
-
 def insurance_payments(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, today=None) -> pd.DataFrame:
     """Every month's premium paid, from each policy's start date up to and including this month: one row per policy per
     month (date = first of the month, amount spread as premium x payments per year / 12). Policies with no start date
@@ -388,7 +304,7 @@ def insurance_payments(ins: pd.DataFrame, revisions: pd.DataFrame | None = None,
             continue
         pid = int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1
         sch = _policy_schedule(row, by_policy.get(pid, []))
-        for ym in range(_ym(start), now + 1):
+        for ym in (range(_ym(start), now + 1) if start <= today else []):
             if sch["in_force"](ym):
                 rows.append({"date": _date(ym // 12, ym % 12 + 1, 1), "policy": row.get("name"),
                              "amount": sch["premium_at"](ym) * sch["mult"] / 12})
@@ -412,12 +328,7 @@ def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, ye
         i["end_date"] = None
     if "active" not in i:
         i["active"] = True
-    for col in ("parent_id", "component"):
-        if col not in i:
-            i[col] = None
     i["premium"] = num(i["premium"])
-    if "id" in i:   # a policy made of covers has no premium of its own: its covers carry it
-        i.loc[i["id"].isin(i["parent_id"].dropna()), "premium"] = 0.0
     monthly = insurance_monthly(i, revisions, year)
     i["months_in_year"] = (monthly > 0).sum(axis=1)
     i["year_cost"] = monthly.sum(axis=1)
@@ -428,14 +339,15 @@ def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, ye
         sch = _policy_schedule(row, by_policy.get(int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1, []))
         if not bool(row["active"]) or (sch["last"] is not None and now > sch["last"]):
             status = "Inactive"
-        elif sch["start"] is not None and _ym(sch["start"]) > now:
+        elif sch["start"] is not None and sch["start"] > today:
             status = "Not started"
         else:
             status = "Active"
         prem_now = sch["premium_at"](now)
         per_year = prem_now * sch["mult"] if status == "Active" else 0.0   # a renewal that has not begun adds nothing yet
         if sch["start"] is not None:
-            months = [m for m in range(_ym(sch["start"]), now + 1) if sch["in_force"](m)]
+            months = [m for m in range(_ym(sch["start"]), now + 1) if sch["in_force"](m)] \
+                if sch["start"] <= today else []
             paid, n = sum(sch["premium_at"](m) * sch["mult"] / 12 for m in months), len(months)
         else:
             paid, n = float("nan"), float("nan")

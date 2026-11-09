@@ -81,27 +81,25 @@ def main(out, reset):
 
     ins("insurance", {"name": "Term Plan", "type": "Term Life", "provider": "HDFC Life", "policy_no": "TL-0001",
                       "sum_assured": 20000000, "premium": 18000, "frequency": "Yearly",
-                      "next_due": today + timedelta(days=20), "link": "https://example.com/term.pdf", "active": True,
+                      "next_due": today + timedelta(days=20), "link": "https://example.com/term.pdf", "active": True, "insured_for": "Me",
                       "start_date": date(2022, 4, 1)})
     ins("insurance_revisions", {"insurance_id": 1, "effective_from": date(today.year, 4, 1), "premium": 15000,
                                 "note": "Tax change"})
     ins("insurance", {"name": "Family Floater", "type": "Health", "provider": "Star Health", "sum_assured": 1000000,
-                      "premium": 1800, "frequency": "Monthly", "link": "https://example.com/health", "active": True,
+                      "premium": 1800, "frequency": "Monthly", "link": "https://example.com/health", "active": True, "insured_for": "Family",
                       "start_date": date(today.year, 7, 1)})
 
-    # vehicle insurance: Own Damage renewed every year + a 5-year Third Party cover, both under one policy
-    veh = ins("insurance", {"name": "Bike policy", "type": "Vehicle", "provider": "ICICI Lombard", "policy_no": "VH-77",
-                            "sum_assured": 180000, "premium": 0, "frequency": "Yearly", "active": True})
+    # vehicle insurance: Own Damage renewed yearly (a new policy each year) and a 5-year Third Party policy
     od1 = today - timedelta(days=500)
     od2 = today - timedelta(days=135)
-    for label, prem, f_, s_, e_, no, cover_ in [
-            ("Own Damage (OD)", 3400, "One-time (whole period)", od1, od1 + timedelta(days=364), "VH-77/1", 200000),
-            ("Own Damage (OD)", 3150, "One-time (whole period)", od2, od2 + timedelta(days=364), "VH-77/2", 180000),
-            ("Third Party (TP)", 5286, "One-time (whole period)", od1,
-             date(od1.year + 5, od1.month, od1.day) - timedelta(days=1), "VH-77/1", 750000)]:
-        ins("insurance", {"name": f"Bike policy · {label}", "type": "Vehicle", "provider": "ICICI Lombard",
-                           "policy_no": no, "premium": prem, "frequency": f_, "start_date": s_, "end_date": e_,
-                           "active": True, "parent_id": veh, "component": label, "sum_assured": cover_})
+    ONE = "One-time (whole period)"
+    for who, prem, s_, e_, cover_, no in [
+            ("Own Damage (OD)", 3400, od1, od1 + timedelta(days=364), 200000, "VH-77/1"),
+            ("Own Damage (OD)", 3150, od2, od2 + timedelta(days=364), 180000, "VH-77/2"),
+            ("Third Party (TP)", 5286, od1, date(od1.year + 5, od1.month, od1.day) - timedelta(days=1), 750000, "VH-77/TP")]:
+        ins("insurance", {"name": "Bike", "type": "Vehicle", "provider": "ICICI Lombard", "policy_no": no,
+                           "insured_for": who, "sum_assured": cover_, "premium": prem, "frequency": ONE,
+                           "start_date": s_, "end_date": e_, "active": True})
 
     ins("loans", {"name": "Home loan", "lender": "SBI", "category": "Good", "principal": 4500000,
                   "outstanding": 3900000, "interest_rate": 8.5, "emi": 39000, "start_date": date(2023, 4, 1),
