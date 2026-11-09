@@ -14,7 +14,7 @@ st.set_page_config(page_title="Asset Tracker", page_icon=":material/account_bala
 MUTED = "#898781"
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 SOURCE_COLORS = {"Salary": "#2a78d6", "Dividend/FD": "#1baf7a", "PL Booking": "#eda100", "Miscellaneous": "#6250d6",
-                 "Taxes Paid": "#d6403a"}
+                 "Taxes Paid": "#d6403a", "Insurance Premium": "#c2185b"}
 LOAN_COLORS = {"Good": "#1baf7a", "Bad": "#eda100", "Worst": "#d6403a"}
 BUCKET_COLORS = ["#2a78d6", "#6aa7ea", "#1baf7a", "#74d1ac", "#eda100", "#f3c85c", "#6250d6", "#a396ea",
                  "#eb6834", "#d6403a", "#c9a227", "#9aa0a6", "#8c5a3c"]
@@ -143,6 +143,7 @@ dividends = db.get_table("dividends")
 savings = db.get_table("savings")
 insurance = db.get_table("insurance")
 ins_rev = db.get_table("insurance_revisions")
+prem_paid = an.insurance_payments(insurance, ins_rev)
 loans = db.get_table("loans")
 metals = db.get_table("metals")
 real_estate = db.get_table("real_estate")
@@ -201,7 +202,10 @@ with tabs[0]:
     auto = st.toggle("Include dividends and realised profit/loss recorded on the Stocks tab", value=True,
                      help="Dividends count as Dividend/FD; sells count as PL Booking. Turn off if you also type "
                           "them on the Source sheet, to avoid double counting.", key="sum_auto")
-    inc = an.income_frame(income, dividends, realised, auto)
+    prem_on = st.toggle("Subtract insurance premiums paid (from the Insurance tab)", value=True, key="sum_prem",
+                        help="Premiums are spread evenly over the months each policy has been in force, from its start "
+                             "date to today, and subtracted from income like Taxes Paid.")
+    inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None)
     years = sorted(inc["year"].unique(), reverse=True)
     period = st.selectbox("Period", ["All time"] + years, key="sum_year",
                           help="Drives the income chart, 'where the income went' and the ideal values below.")
@@ -330,7 +334,8 @@ with tabs[1]:
             else:
                 st.error("Enter an amount above zero.")
 
-    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True))
+    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True),
+                          prem_paid if st.session_state.get("sum_prem", True) else None)
     view = st.radio("View", ["Per month", "Per year"], horizontal=True, key="src_view")
     if view == "Per month":
         ys = sorted(inc["year"].unique(), reverse=True) or [date.today().year]
@@ -427,9 +432,9 @@ with tabs[3]:
                             help="Premiums are shown per year, spread over the months each policy is in force: "
                                  "premium × payments per year × months in force ÷ 12.")
     ins_y = an.insurance_frame(insurance, ins_rev, year=ins_year)
-    act = ins_y[ins_y["active"].astype(bool)]
+    act = ins_y[ins_y["status"] == "Active"]
     c = st.columns(3)
-    kpi(c[0], "Active policies", str(len(act)))
+    kpi(c[0], "Policies", f"{len(act)} active · {int((ins_y['status'] == 'Inactive').sum())} inactive")
     kpi(c[1], "Premium per month (now)", ins_y["per_month"].sum(), help="The rate being paid today, after any premium change.")
     kpi(c[2], "Premium per year (now)", ins_y["per_year"].sum(), help="Today's rate for a full year.")
     st.write("")
@@ -529,26 +534,26 @@ with tabs[3]:
                 hint="Edit cells, or tick a row's left edge and press Delete; then Save changes.")
 
     if not ins_y.empty:
-        st.markdown(f"##### What each policy costs in {ins_year}")
-        t = pd.DataFrame({
-            "Policy": ins_y["name"], "Type": ins_y["type"], "Premium now": ins_y["premium_now"],
-            "Paid": ins_y["frequency"], "Months in force": ins_y["months_in_year"].astype(int),
-            f"Cost in {ins_year}": ins_y["year_cost"], "Per month (now)": ins_y["per_month"],
-            "Per year (now)": ins_y["per_year"], "Paid to date": ins_y["paid_to_date"]})
-        money = ["Premium now", f"Cost in {ins_year}", "Per month (now)", "Per year (now)"]
-        t = fmt_df(t, money)
-        t["Paid to date"] = ins_y["paid_to_date"].map(lambda v: "–" if pd.isna(v) else an.inr(v))
-        st.dataframe(t, hide_index=True, width="stretch")
-        monthly = an.insurance_monthly(ins_y, ins_rev, ins_year)
-        if monthly.to_numpy().sum() > 0:
-            fig = go.Figure()
-            for idx, row in ins_y.iterrows():
-                fig.add_bar(x=MONTHS, y=monthly.loc[idx].values, name=row["name"])
-            fig.update_layout(barmode="stack")
-            fig.update_yaxes(tickprefix="₹", tickformat="~s")
-            show(style(fig, f"Premium by month, {ins_year}", height=300))
-            st.caption("Each month shows the premium ÷ payments per year, so yearly and quarterly policies are spread "
-                       "evenly. A premium change shows up as a step from its month.")
+        g = ins_y.assign(paid=ins_y["paid_to_date"].fillna(0.0)).sort_values("paid")
+        colors = {"Active": "#1baf7a", "Inactive": "#898781", "Not started": "#eda100"}
+        fig = go.Figure()
+        for stt, color in colors.items():
+            d = g[g["status"] == stt]
+            if d.empty:
+                continue
+            cover = an.num(d["sum_assured"])
+            fig.add_bar(y=d["name"], x=d["paid"], name=stt, orientation="h", marker_color=color,
+                        text=[f"{an.inr(a)} paid · cover {an.inr(b)}" for a, b in zip(d["paid"], cover)],
+                        textposition="outside", cliponaxis=False,
+                        hovertemplate="%{y}: %{text}<extra>" + stt + "</extra>")
+        fig.update_xaxes(tickprefix="₹", tickformat="~s", range=[0, max(g["paid"].max(), 1) * 1.7])
+        show(style(fig, "Premium paid to date and cover, by policy", height=120 + 60 * len(g)))
+        st.caption("Bar = premium paid since the policy started; the label also shows the amount insured. "
+                   "Colour = whether the policy is active now.")
+        nodate = ins_y[ins_y["paid_to_date"].isna()]["name"].tolist()
+        if nodate:
+            st.info("No start date, so no premium history: " + ", ".join(nodate) +
+                    ". Add a start date to count what you paid (it is also subtracted from income on the Summary).")
 
     with st.expander("Edit or delete policies", icon=":material/edit:"):
         edit_table("insurance", insurance, insurance, {

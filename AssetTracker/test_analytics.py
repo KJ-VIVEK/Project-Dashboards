@@ -513,3 +513,31 @@ def test_deleting_a_policy_removes_its_premium_changes(path):
     db.insert("insurance_revisions", {"insurance_id": pid, "effective_from": date(2026, 1, 1), "premium": 9}, path)
     db.delete_row("insurance", pid, path)
     assert db.get_table("insurance_revisions", path).empty
+
+
+def test_policy_status_active_inactive_not_started():
+    ins = pd.concat([_policy(id=1, start_date=date(2025, 1, 1)),
+                     _policy(id=2, start_date=date(2024, 1, 1), end_date=date(2025, 12, 31)),
+                     _policy(id=3, active=False),
+                     _policy(id=4, start_date=date(2027, 1, 1))], ignore_index=True)
+    f = an.insurance_frame(ins, today=TODAY)
+    assert list(f["status"]) == ["Active", "Inactive", "Inactive", "Not started"]
+    assert list(f["per_year"] == 0) == [False, True, True, False]
+
+
+def test_premiums_paid_are_tracked_monthly_and_subtracted_from_income():
+    term = _policy(premium=18000.0, frequency="Yearly", start_date=date(2026, 8, 20))
+    revs = pd.DataFrame([{"id": 1, "insurance_id": 1, "effective_from": date(2026, 10, 1), "premium": 15000.0,
+                          "note": None}])
+    pay = an.insurance_payments(term, revs, today=TODAY)
+    assert list(pay["date"]) == [date(2026, 8, 1), date(2026, 9, 1), date(2026, 10, 1), date(2026, 11, 1)]
+    assert list(pay["amount"]) == [1500, 1500, 1250, 1250]
+    assert pay["amount"].sum() == an.insurance_frame(term, revs, today=TODAY).iloc[0]["paid_to_date"]
+    assert an.insurance_payments(_policy(), None, today=TODAY).empty            # no start date, no history
+    inc = pd.DataFrame({"date": [date(2026, 8, 5)], "source": ["Salary"], "amount": [100000.0]})
+    empty = pd.DataFrame(columns=["date", "amount", "pnl"])
+    f = an.income_frame(inc, empty, empty, True, pay)
+    assert f["amount"].sum() == 100000 - 5500
+    assert set(f["source"]) == {"Salary", db.PREMIUM_SOURCE} and (f[f.source == db.PREMIUM_SOURCE]["amount"] < 0).all()
+    assert an.income_pivot(f, None, by="year").loc[db.PREMIUM_SOURCE, 2026] == -5500
+    assert an.income_frame(inc, empty, empty, True)["amount"].sum() == 100000    # off by default
