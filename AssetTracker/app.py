@@ -439,19 +439,18 @@ with tabs[1]:
         st.markdown("##### Income growth, year on year")
         avg = an.average_growth(yo["yoy_pct"])
         trend = an.growth_line(yo.set_index("year")["net"], avg)
-        pct = lambda s: [("" if pd.isna(v) else f"{v:+.0f}%") for v in s]
         fig = go.Figure()
         fig.add_bar(x=yo["year"], y=yo["tax"], name="Tax paid", marker_color="rgba(214,64,58,0.35)",
-                    marker_line=dict(color="#d6403a", width=1.5), text=pct(yo["tax_yoy_pct"]), textposition="outside",
+                    marker_line=dict(color="#d6403a", width=1.5),
                     customdata=yo["tax_yoy_pct"].fillna(0),
                     hovertemplate="%{x}: ₹%{y:,.0f} tax<br>vs last year: %{customdata:+.1f}%<extra></extra>")
-        fig.add_scatter(x=yo["year"], y=yo["gross"], name="Before tax", mode="lines+markers+text",
-                        line=dict(color="#1baf7a", width=3), marker=dict(size=8),
-                        text=pct(yo["gross_yoy_pct"]), textposition="top center", customdata=yo["gross_yoy_pct"].fillna(0),
+        fig.add_scatter(x=yo["year"], y=yo["gross"], name="Before tax", mode="lines+markers",
+                        line=dict(color="#1baf7a", width=3), marker=dict(size=9),
+                        customdata=yo["gross_yoy_pct"].fillna(0),
                         hovertemplate="%{x}: ₹%{y:,.0f} before tax<br>vs last year: %{customdata:+.1f}%<extra></extra>")
-        fig.add_scatter(x=yo["year"], y=yo["net"], name="After tax", mode="lines+markers+text",
-                        line=dict(color="#eb6834", width=3), marker=dict(size=8),
-                        text=pct(yo["yoy_pct"]), textposition="bottom center", customdata=yo["yoy_pct"].fillna(0),
+        fig.add_scatter(x=yo["year"], y=yo["net"], name="After tax", mode="lines+markers",
+                        line=dict(color="#eb6834", width=3), marker=dict(size=9),
+                        customdata=yo["yoy_pct"].fillna(0),
                         hovertemplate="%{x}: ₹%{y:,.0f} after tax<br>vs last year: %{customdata:+.1f}%<extra></extra>")
         if avg is not None:
             fig.add_scatter(x=yo["year"], y=trend.values, name=f"Average growth ({avg:+.1f}% a year)", mode="lines",
@@ -459,10 +458,16 @@ with tabs[1]:
                             hovertemplate="%{x}: ₹%{y:,.0f} at the average growth<extra></extra>")
         fig.update_xaxes(type="category")
         fig.update_yaxes(tickprefix="₹", tickformat="~s")
-        fig.update_layout(barmode="group")
-        show(style(fig, "Income and tax per year; the % on each point or box is its change from the year before", height=380))
+        fig.update_layout(barmode="group", bargap=0.55, hovermode="x unified")
+        fig.update_xaxes(tickfont=dict(size=13))
+        fig.update_yaxes(tickfont=dict(size=12), nticks=7)
+        show(style(fig, "Income and tax per year", height=480))
+        chg = pd.DataFrame({"Before tax": yo["gross_yoy_pct"], "After tax": yo["yoy_pct"], "Tax paid": yo["tax_yoy_pct"]})
+        chg.index = yo["year"].astype(str)
+        st.caption("Change from the year before")
+        st.dataframe(chg.T.map(lambda v: "–" if pd.isna(v) else f"{v:+.1f}%"), width="stretch")
         if avg is not None:
-            st.caption(f"Green: income before tax. Orange: income after tax. Boxes: tax paid. Black dotted: where after-tax "
+            st.caption(f"Green: income before tax. Orange: income after tax. Boxes: tax paid (hover for the exact amount and change). Black dotted: where after-tax "
                        f"income would be if it had grown by the average year-on-year growth, **{avg:+.1f}%**, every year "
                        "from the first year.")
 
