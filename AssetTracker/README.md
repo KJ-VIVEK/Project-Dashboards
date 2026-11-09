@@ -21,7 +21,7 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
 | **Loans** | Good / Bad / Worst debt, EMI, links, free-text details, and a downloadable Markdown write-up to share. |
 | **Stocks** | Holdings by category (India high-quality/risky, index funds, MFs, ETFs, international stable/risky, REITs/InvITs, unlisted, crypto). Record buys, sells and dividends; average cost, % of portfolio, P/L, dividends received and the reason for each holding are calculated. |
 | **Gold & Silver** | Physical purchases with making charges, GST and other charges; valued at the per-gram price you type. |
-| **Real Estate** | Cost, cost per sq ft, extra charges, rent yield, current value. |
+| **Real Estate** | Cost, cost per sq ft, extra charges, rent yield. Current value = today's price per sq ft × area. |
 | **Notes** | Todos / ideas: add, edit, mark done, delete. |
 
 ## Live prices and USD

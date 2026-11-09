@@ -171,12 +171,14 @@ def metals_frame(metals: pd.DataFrame, prices: dict[str, float]) -> pd.DataFrame
 
 def real_estate_frame(re_: pd.DataFrame) -> pd.DataFrame:
     r = re_.copy()
-    for c in ("cost", "area_sqft", "registration", "brokerage", "other_charges", "monthly_rent", "current_value"):
+    for c in ("cost", "area_sqft", "registration", "brokerage", "other_charges", "monthly_rent", "current_per_sqft"):
         r[c] = num(r[c])
     r["extra_charges"] = r["registration"] + r["brokerage"] + r["other_charges"]
     r["total_cost"] = r["cost"] + r["extra_charges"]
     r["cost_per_sqft"] = (r["cost"] / r["area_sqft"].where(r["area_sqft"] > 0)).fillna(0.0)
-    r["value"] = r["current_value"].where(r["current_value"] > 0, r["cost"])  # unknown market value -> cost
+    # current value = today's price per sq ft x area; unknown price or area -> fall back to cost
+    est = r["current_per_sqft"] * r["area_sqft"]
+    r["value"] = est.where(est > 0, r["cost"])
     r["gain"] = r["value"] - r["total_cost"]
     r["annual_rent"] = r["monthly_rent"].where(r["rent_yielding"].astype(bool), 0.0) * 12
     r["rent_yield_pct"] = (r["annual_rent"] / r["total_cost"].where(r["total_cost"] > 0)).fillna(0.0) * 100

@@ -105,7 +105,7 @@ def main(out, reset):
     ins("real_estate", {"name": "2BHK Whitefield", "kind": "Flat", "location": "Bengaluru",
                         "purchase_date": date(2023, 4, 1), "cost": 6000000, "area_sqft": 1100,
                         "registration": 420000, "brokerage": 60000, "other_charges": 90000, "rent_yielding": True,
-                        "monthly_rent": 24000, "current_value": 6900000})
+                        "monthly_rent": 24000, "current_per_sqft": 6300})
 
     ins("notes", {"title": "Rebalance in March", "body": "Trim risky stocks back to target.", "kind": "Todo",
                   "done": False, "created": str(today), "updated": str(today)})
