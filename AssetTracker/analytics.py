@@ -219,6 +219,28 @@ def insurance_frame(ins: pd.DataFrame) -> pd.DataFrame:
     return i
 
 
+def emi_schedule(principal: float, rate_pct: float, planned_months: int, months_paid: int) -> dict | None:
+    """Standard reducing-balance EMI maths for a loan that is paid off after `months_paid` EMIs.
+
+    Returns the EMI, the interest the full tenure would have cost, the interest actually paid (EMIs paid plus the
+    balance cleared on closing) and the difference. None when the inputs cannot support it."""
+    try:
+        P, n, k = float(principal), int(planned_months), int(months_paid)
+        r = float(rate_pct) / 1200.0
+    except (TypeError, ValueError):
+        return None
+    if not (P > 0 and n > 0 and r >= 0) or any(pd.isna(v) for v in (P, r)):
+        return None
+    k = max(0, min(k, n))
+    emi = P / n if r == 0 else P * r * (1 + r) ** n / ((1 + r) ** n - 1)
+    balance = P * (1 + r) ** k - emi * (((1 + r) ** k - 1) / r if r else k)   # still owed after k EMIs
+    balance = max(balance, 0.0)
+    full = emi * n - P
+    paid = emi * k + balance - P
+    return {"emi": emi, "interest_full": full, "interest_paid": paid, "interest_saved": max(full - paid, 0.0),
+            "balance_cleared": balance}
+
+
 def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     l = loans.copy()
     for c in ("principal", "outstanding", "interest_rate", "emi"):
@@ -242,6 +264,18 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
         except AttributeError:
             return None
     l["tenure_months"] = [months(a, b) for a, b in zip(l["start_date"], end)]
+    l["planned_months"] = [months(a, b) for a, b in zip(l["start_date"], l["end_date"])]
+    cols = ("emi_std", "interest_full", "interest_paid", "interest_saved", "balance_cleared")
+    for c in cols:
+        l[c] = float("nan")
+    for i, r in l.iterrows():
+        k = r["tenure_months"] if closed[i] else 0
+        res = emi_schedule(r["principal"], r["interest_rate"], r["planned_months"], k if pd.notna(k) else None)
+        if res:
+            l.loc[i, "emi_std"], l.loc[i, "interest_full"] = res["emi"], res["interest_full"]
+            if closed[i] and pd.notna(r["tenure_months"]):
+                l.loc[i, ["interest_paid", "interest_saved", "balance_cleared"]] = [
+                    res["interest_paid"], res["interest_saved"], res["balance_cleared"]]
     return l
 
 
@@ -349,7 +383,11 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
                   f"- Status: {r['status']}"
                   + (f" (closed {r['closed_date']})" if r['status'] == 'Closed' and r['closed_date'] else "")
                   + (f" · Tenure: {int(r['tenure_months'])} months" if pd.notna(r['tenure_months']) else ""),
-                  f"- Interest rate: {r['interest_rate']:g}% · EMI: {inr(r['emi'])}",
+                  f"- Interest rate: {r['interest_rate']:g}% · EMI: {inr(r['emi'])}"]
+        if r["status"] == "Closed" and pd.notna(r["interest_paid"]):
+            lines.append(f"- Interest paid: {inr(r['interest_paid'])} of {inr(r['interest_full'])} for the full "
+                         f"tenure, so {inr(r['interest_saved'])} saved by closing early")
+        lines += [
                   f"- Start: {r['start_date'] or '–'} · End: {r['end_date'] or '–'}"]
         if r["link"]:
             lines.append(f"- Documents: {r['link']}")

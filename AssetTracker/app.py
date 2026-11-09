@@ -519,6 +519,31 @@ with tabs[4]:
         fig = go.Figure(go.Bar(x=g.values, y=g.index, orientation="h", marker_color=[LOAN_COLORS[k] for k in g.index]))
         fig.update_xaxes(tickprefix="₹", tickformat="~s")
         show(style(fig, "Outstanding by debt quality", height=220))
+    closed_f = loans_f[loans_f["status"] == "Closed"]
+    if not closed_f.empty:
+        st.markdown("**Closed loans: interest paid vs the full tenure**")
+        with_calc = closed_f[closed_f["interest_paid"].notna()]
+        if not with_calc.empty:
+            c = st.columns(3)
+            kpi(c[0], "Interest paid (closed loans)", with_calc["interest_paid"].sum())
+            kpi(c[1], "Full-tenure interest", with_calc["interest_full"].sum())
+            kpi(c[2], "Interest saved by closing early", with_calc["interest_saved"].sum())
+            t = pd.DataFrame({
+                "Loan": with_calc["name"], "Principal": with_calc["principal"],
+                "Planned": with_calc["planned_months"].map(lambda v: f"{int(v)} mo"),
+                "Ran for": with_calc["tenure_months"].map(lambda v: f"{int(v)} mo"),
+                "EMI (calculated)": with_calc["emi_std"], "Balance cleared": with_calc["balance_cleared"],
+                "Interest paid": with_calc["interest_paid"], "Full-tenure interest": with_calc["interest_full"],
+                "Saved": with_calc["interest_saved"]})
+            st.dataframe(fmt_df(t, ["Principal", "EMI (calculated)", "Balance cleared", "Interest paid",
+                                    "Full-tenure interest", "Saved"]), hide_index=True, width="stretch")
+            st.caption("Standard reducing-balance EMI maths: the EMI is worked out from principal, rate and the planned "
+                       "tenure (start to planned end). Interest paid = EMIs paid until closing + the balance cleared "
+                       "that day − principal. Saved = full-tenure interest − interest paid.")
+        missing = closed_f[closed_f["interest_paid"].isna()]["name"].tolist()
+        if missing:
+            st.info("Add principal, interest %, start date, planned end date and closing date to see interest saved "
+                    "for: " + ", ".join(missing))
     edit_table("loans", loans.assign(tenure_months=loans_f["tenure_months"]), loans, {
         "name": st.column_config.TextColumn("Loan", required=True), "lender": "Lender",
         "category": st.column_config.SelectboxColumn("Category", options=db.LOAN_CATEGORIES, required=True),
