@@ -15,7 +15,7 @@ st.set_page_config(page_title="Asset Tracker", page_icon=":material/account_bala
 MUTED = "#898781"
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 SOURCE_COLORS = {"Salary": "#2a78d6", "Dividend/FD": "#1baf7a", "PL Booking": "#eda100", "Miscellaneous": "#6250d6",
-                 "Taxes Paid": "#d6403a", "Other Deductions": "#eb6834", "Insurance Premium": "#c2185b"}
+                 "Taxes Paid": "#d6403a", "Insurance Premium": "#c2185b"}
 LOAN_COLORS = {"Good": "#1baf7a", "Bad": "#eda100", "Worst": "#d6403a"}
 BUCKET_COLORS = ["#2a78d6", "#6aa7ea", "#1baf7a", "#74d1ac", "#eda100", "#f3c85c", "#6250d6", "#a396ea",
                  "#eb6834", "#d6403a", "#c9a227", "#9aa0a6", "#8c5a3c"]
@@ -375,9 +375,11 @@ with tabs[0]:
 
 # ================================================================== 2. SOURCE (income)
 with tabs[1]:
-    st.caption("Everything you earn, by month (use a negative amount for a loss, e.g. an FD closed early). Each entry carries its own **Taxes paid** and **Other deductions** (PF, professional tax…), "
-               "entered as positive amounts and subtracted from the totals, so income shown is after deductions. Dividends and realised profit/loss from the Stocks tab "
-               "appear in the tables below automatically (switch this off on the Summary tab).")
+    st.caption("Everything you earn, by month (use a negative amount for a loss, e.g. an FD closed early). Each entry "
+               "carries its own **Taxes paid**, which is subtracted, so income shown is after tax. **Put in EPF / NPS or "
+               "returned** is money that was taken off but is still yours, so it is only recorded, never subtracted. "
+               "Dividends and realised profit/loss from the Stocks tab appear in the tables below automatically "
+               "(switch this off on the Summary tab).")
     with st.form("add_income", clear_on_submit=True, border=False):
         c = st.columns([1, 1.2, 2], vertical_alignment="bottom")
         d_ = dinput(c[0], "Date", date.today())
@@ -388,8 +390,9 @@ with tabs[1]:
                                 help="Negative for a loss or money lost, e.g. an FD closed early.")
         tax = c[1].number_input("Taxes paid (₹)", min_value=0.0, step=500.0, format="%.2f",
                                 help="Taken off this inflow. Kept on the same entry.")
-        oth = c[2].number_input("Other deductions (₹)", min_value=0.0, step=500.0, format="%.2f",
-                                help="PF, professional tax, anything else taken off on this date.")
+        oth = c[2].number_input("Put in EPF / NPS or returned (₹)", min_value=0.0, step=500.0, format="%.2f",
+                                help="Taken off this inflow but still yours: EPF, NPS, an amount given back to you. "
+                                     "Only recorded, not subtracted from income.")
         if c[3].form_submit_button("Add", width="stretch", type="primary"):
             if amt == 0:
                 st.error("Enter the amount, positive for money received or negative for a loss. Taxes and deductions "
@@ -415,6 +418,28 @@ with tabs[1]:
     pv.loc["Total"] = pv.sum()
     st.dataframe(pv.map(lambda v: an.inr(v) if v else "·"), width="stretch")
 
+    # money taken off an inflow but not lost, for the period shown above
+    dts_all = pd.to_datetime(income["date"], errors="coerce")
+    in_period = (dts_all.dt.year == yr) if view == "Per month" else dts_all.notna()
+    k = st.columns(3)
+    kpi(k[0], "Income after tax" + (f" ({yr})" if view == "Per month" else " (all years)"), float(pv.loc["Total", "Total"]))
+    kpi(k[1], "Taxes paid", float(-pv.loc[db.TAX_SOURCE, "Total"]))
+    kpi(k[2], "Put in EPF / NPS or returned", float(an.num(income.loc[in_period, "other_deductions"]).sum()),
+        help="Recorded only. It is still your money, so it is not subtracted from income.")
+
+    yo = an.inflow_by_year(inc)
+    if len(yo) > 1:
+        st.markdown("##### Cash inflow, year on year")
+        fig = go.Figure()
+        fig.add_bar(x=yo["year"], y=yo["gross"], name="Before tax", marker_color=IDEAL)
+        fig.add_bar(x=yo["year"], y=yo["net"], name="After tax", marker_color=REAL,
+                    text=[("" if pd.isna(v) else f"{v:+.0f}%") for v in yo["yoy_pct"]], textposition="outside",
+                    customdata=yo["yoy_pct"].fillna(0), hovertemplate="%{x}: ₹%{y:,.0f}<br>vs last year: %{customdata:+.1f}%")
+        fig.update_xaxes(type="category")
+        fig.update_yaxes(tickprefix="₹", tickformat="~s")
+        fig.update_layout(barmode="group")
+        show(style(fig, "Inflow per year (the % is the change in after-tax inflow from the year before)", height=320))
+
     st.markdown("**Edit entries**")
     f1, f2, f3 = st.columns(3)
     all_years = sorted({d.year for d in income["date"].dropna()}, reverse=True)
@@ -437,7 +462,8 @@ with tabs[1]:
         "amount": st.column_config.NumberColumn("Amount (₹)", format="%.2f", required=True,
                                                 help="Negative for a loss, e.g. an FD closed early."),
         "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
-        "other_deductions": money_cfg("Other deductions (₹)", help="PF, professional tax… deducted from this inflow.")},
+        "other_deductions": money_cfg("EPF / NPS / returned (₹)",
+                                      help="Put in EPF/NPS or given back to you. Recorded only, not subtracted.")},
         ("date", "source", "amount"), "income")
 
 # ================================================================== 3. CASH & SAVINGS

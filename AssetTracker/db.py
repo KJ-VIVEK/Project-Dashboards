@@ -17,9 +17,10 @@ BACKUP_DIR = os.environ.get("ASSET_BACKUP_DIR", os.path.join(BASE_DIR, "backups"
 # ---- fixed vocabularies -------------------------------------------------------------------------------
 TAX_SOURCE = "Taxes Paid"  # entered as a positive amount, subtracted from income totals
 PREMIUM_SOURCE = "Insurance Premium"  # derived from the Insurance tab, subtracted from income like taxes
-OTHER_DEDUCTION_SOURCE = "Other Deductions"  # PF, professional tax, loan recovery...: also positive, also subtracted
-DEDUCTION_SOURCES = [TAX_SOURCE, OTHER_DEDUCTION_SOURCE]
-INCOME_SOURCES = ["Salary", "Dividend/FD", "PL Booking", "Miscellaneous", TAX_SOURCE, OTHER_DEDUCTION_SOURCE]
+# Money taken from an inflow but not lost (EPF, NPS, amounts returned to you) is stored in income.other_deductions as
+# information only: it is NOT subtracted from income. Only taxes are.
+DEDUCTION_SOURCES = [TAX_SOURCE]
+INCOME_SOURCES = ["Salary", "Dividend/FD", "PL Booking", "Miscellaneous", TAX_SOURCE]
 SECURITY_CATEGORIES = [
     "India - High Quality", "India - Risky", "Index Funds", "Mutual Funds", "ETFs",
     "International - Stable", "International - Risky", "REITs/InvITs", "Unlisted Stocks", "Crypto",

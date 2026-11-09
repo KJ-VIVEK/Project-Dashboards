@@ -664,15 +664,13 @@ def test_every_editable_table_has_rules_and_row_numbers_count_from_one():
     assert val.validate("insurance", two) == ["Row 2 (B): Premium must be above 0 (got 0)."]
 
 
-def test_other_deductions_are_subtracted_like_taxes():
-    inc = pd.DataFrame({"date": [date(2025, 1, 31)] * 3, "source": ["Salary", "Taxes Paid", "Other Deductions"],
-                        "amount": [1000.0, 100.0, 40.0]})
+def test_epf_nps_or_returned_amounts_are_recorded_but_not_subtracted():
+    inc = pd.DataFrame({"date": [date(2025, 1, 31)], "source": ["Salary"], "amount": [1000.0], "tax_paid": [100.0],
+                        "other_deductions": [40.0]})
     none = pd.DataFrame({"date": [], "amount": []})
     df = an.income_frame(inc, none, pd.DataFrame({"date": [], "pnl": []}))
-    assert df["amount"].sum() == 860
-    assert an.income_pivot(df, 2025).loc["Other Deductions", 1] == -40
-    assert not val.validate("income", pd.DataFrame({"id": [1], "date": [date(2025, 1, 31)], "source": ["Other Deductions"],
-                                                    "amount": [40.0]}))
+    assert df["amount"].sum() == 900                                  # only the tax comes off
+    assert "Other Deductions" not in set(df["source"])
 
 
 def test_deductions_on_the_inflow_row_are_subtracted_on_its_date():
@@ -722,23 +720,22 @@ def _src(rows):
 
 def test_source_totals_match_a_hand_sum():
     inc = _src([
-        [date(2025, 1, 28), "Salary", "A", 100000.0, 10000.0, 5000.0],     # net 85,000
-        [date(2025, 2, 28), "Salary", "A", 100000.0, 10000.0, None],       # net 90,000
-        [date(2025, 2, 10), "Miscellaneous", "bonus", 20000.0, None, 0.0],  # net 20,000
-        [date(2026, 1, 28), "Salary", "A", 50000.0, 2500.0, 500.0],        # net 47,000
+        [date(2025, 1, 28), "Salary", "A", 100000.0, 10000.0, 5000.0],     # EPF/NPS 5,000 is not subtracted
+        [date(2025, 2, 28), "Salary", "A", 100000.0, 10000.0, None],       
+        [date(2025, 2, 10), "Miscellaneous", "bonus", 20000.0, None, 0.0],  
+        [date(2026, 1, 28), "Salary", "A", 50000.0, 2500.0, 500.0],        
     ])
     d, r = _empty_auto()
     df = an.income_frame(inc, d, r)
     m25 = _source_total_row(df, 2025)
     assert m25.loc["Salary", "Total"] == 200000                    # gross salary
     assert m25.loc["Taxes Paid", "Total"] == -20000
-    assert m25.loc["Other Deductions", "Total"] == -5000
-    assert m25.loc["Total", 1] == 85000 and m25.loc["Total", 2] == 110000     # Jan, Feb net
-    assert m25.loc["Total", "Total"] == 85000 + 90000 + 20000 == 195000
+    assert m25.loc["Total", 1] == 90000 and m25.loc["Total", 2] == 110000     # Jan 100k-10k; Feb 100k+20k bonus-10k
+    assert m25.loc["Total", "Total"] == 200000 + 20000 - 20000 == 200000
     y = _source_total_row(df, None, by="year")
-    assert y.loc["Total", 2025] == 195000 and y.loc["Total", 2026] == 47000
-    assert y.loc["Total", "Total"] == 242000                       # the sum of all years
-    assert y.loc["Total", "Total"] == m25.loc["Total", "Total"] + 47000
+    assert y.loc["Total", 2025] == 200000 and y.loc["Total", 2026] == 47500
+    assert y.loc["Total", "Total"] == 247500                       # the sum of all years
+    assert y.loc["Total", "Total"] == m25.loc["Total", "Total"] + 47500
 
 
 def test_source_row_and_column_totals_agree():
@@ -746,7 +743,7 @@ def test_source_row_and_column_totals_agree():
     d, r = _empty_auto()
     pv = _source_total_row(an.income_frame(inc, d, r), 2024)
     body = pv.drop(index="Total", columns="Total")
-    assert pv.loc["Total", "Total"] == body.to_numpy().sum() == 1000 - 100 - 50 - 300
+    assert pv.loc["Total", "Total"] == body.to_numpy().sum() == 1000 - 100 - 300
     assert (pv["Total"].drop("Total") == body.sum(axis=1)).all()
     assert (pv.loc["Total"].drop("Total") == body.sum(axis=0)).all()
 
@@ -756,11 +753,10 @@ def test_source_deduction_edge_cases():
         [date(2025, 5, 1), "Salary", "s", 1000.0, -100.0, None],            # a deduction typed negative still subtracts once
         [date(2025, 5, 2), "Salary", "s", 1000.0, float("nan"), float("nan")],   # blank deductions add nothing
         [date(2025, 5, 3), "Taxes Paid", "old style row", 70.0, None, None],     # a legacy separate row still subtracts
-        [date(2025, 5, 4), "Other Deductions", "old style row", -30.0, None, None],
     ])
     d, r = _empty_auto()
     df = an.income_frame(inc, d, r)
-    assert df["amount"].sum() == 1000 - 100 + 1000 - 70 - 30 == 1800
+    assert df["amount"].sum() == 1000 - 100 + 1000 - 70 == 1830
     assert not df["amount"].isna().any()
 
 
@@ -798,3 +794,19 @@ def test_negative_amounts_on_any_source_reduce_the_totals():
     pv = _source_total_row(an.income_frame(inc, d, r), 2025)
     assert pv.loc["Dividend/FD", 4] == 2500 and pv.loc["Salary", 4] == -200
     assert pv.loc["Total", "Total"] == 2500 - 100 - 200 == 2200
+
+
+def test_inflow_by_year_and_yoy_change():
+    inc = _src([[date(2023, 3, 1), "Salary", "s", 1000.0, 200.0, None],
+                [date(2024, 3, 1), "Salary", "s", 1500.0, 300.0, None],
+                [date(2024, 9, 1), "Dividend/FD", "fd penalty", -100.0, None, None],
+                [date(2026, 1, 1), "Salary", "s", 600.0, 0.0, None]])
+    d, r = _empty_auto()
+    y = an.inflow_by_year(an.income_frame(inc, d, r)).set_index("year")
+    assert y.loc[2023, "gross"] == 1000 and y.loc[2023, "tax"] == 200 and y.loc[2023, "net"] == 800
+    assert y.loc[2024, "gross"] == 1400 and y.loc[2024, "net"] == 1100
+    assert pd.isna(y.loc[2023, "yoy_pct"])                       # first year has nothing to compare with
+    assert round(y.loc[2024, "yoy_pct"], 6) == round((1100 - 800) / 800 * 100, 6) == 37.5
+    assert y.loc[2025, "net"] == 0 and y.loc[2025, "yoy_pct"] == -100.0      # a missing year is shown as zero
+    assert pd.isna(y.loc[2026, "yoy_pct"])                       # no % from a zero year
+    assert an.inflow_by_year(an.income_frame(inc.iloc[0:0], d, r)).empty

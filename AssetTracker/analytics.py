@@ -126,16 +126,16 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
     (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
-    amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes and other deductions reduce the total
+    amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes reduce the total
     parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
                            "origin": "Source sheet"})]
-    # deductions entered on an inflow's own row (taxes paid, other deductions) become negative rows on its date
-    for col, src in (("tax_paid", db.TAX_SOURCE), ("other_deductions", db.OTHER_DEDUCTION_SOURCE)):
-        if col in income:
-            ded = num(income[col])
-            keep = ded.abs() > 0
-            parts.append(pd.DataFrame({"date": income["date"][keep], "source": src, "amount": -ded[keep].abs(),
-                                       "origin": "Source sheet"}))
+    # taxes entered on an inflow's own row become a negative Taxes Paid row on its date. The "put in EPF/NPS or
+    # returned" column (other_deductions) is information only and never subtracted.
+    if "tax_paid" in income:
+        ded = num(income["tax_paid"])
+        keep = ded.abs() > 0
+        parts.append(pd.DataFrame({"date": income["date"][keep], "source": db.TAX_SOURCE, "amount": -ded[keep].abs(),
+                                   "origin": "Source sheet"}))
     if include_auto:
         parts.append(pd.DataFrame({"date": dividends["date"], "source": "Dividend/FD",
                                    "amount": num(dividends["amount"]), "origin": "Stocks (dividend)"}))
@@ -606,3 +606,18 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
             lines += ["", _txt(r["details"])]
         lines.append("")
     return "\n".join(lines)
+
+
+def inflow_by_year(df: pd.DataFrame) -> pd.DataFrame:
+    """Cash inflow per year: before tax, after tax, and the year-on-year change of the after-tax figure (%).
+    `df` is an income_frame. YoY is NaN for the first year or when the previous year was zero or negative."""
+    if df.empty:
+        return pd.DataFrame(columns=["year", "gross", "tax", "net", "yoy_pct"])
+    g = df.groupby("year").apply(lambda d: pd.Series({
+        "gross": d.loc[d["source"] != db.TAX_SOURCE, "amount"].sum(),
+        "tax": -d.loc[d["source"] == db.TAX_SOURCE, "amount"].sum()}), include_groups=False)
+    g["net"] = g["gross"] - g["tax"]
+    g = g.reindex(range(int(g.index.min()), int(g.index.max()) + 1), fill_value=0.0)
+    prev = g["net"].shift(1)
+    g["yoy_pct"] = ((g["net"] - prev) / prev * 100).where(prev > 0)
+    return g.rename_axis("year").reset_index()
