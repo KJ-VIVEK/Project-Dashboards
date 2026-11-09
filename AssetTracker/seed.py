@@ -94,7 +94,8 @@ def main(out, reset):
                   "interest_rate": 42.0})
     ins("loans", {"name": "Personal loan (prepaid)", "lender": "HDFC", "category": "Worst", "principal": 200000,
                   "outstanding": 0, "interest_rate": 14.5, "start_date": "2024-02-01", "end_date": "2026-02-01", "status": "Closed",
-                  "closed_date": "2024-11-15"})
+                  "closed_date": "2024-11-15", "down_payment": 0, "other_charges": 3500, "installments_paid": 9,
+                  "emi_paid": 86800, "emi_interest": 16300, "closing_payment": 133000})
 
     for metal, form, desc, g, rate, mk, gst in [("Gold", "Coin", "10 g coin (24K)", 10, 6200, 300, 1900),
                                                 ("Gold", "Jewellery", "5 g chain (22K)", 5, 6900, 200, 1070),

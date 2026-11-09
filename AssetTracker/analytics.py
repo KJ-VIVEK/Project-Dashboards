@@ -265,17 +265,34 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
             return None
     l["tenure_months"] = [months(a, b) for a, b in zip(l["start_date"], end)]
     l["planned_months"] = [months(a, b) for a, b in zip(l["start_date"], l["end_date"])]
-    cols = ("emi_std", "interest_full", "interest_paid", "interest_saved", "balance_cleared")
-    for c in cols:
+    for c in ("down_payment", "other_charges", "emi_paid", "emi_interest", "closing_payment", "installments_paid"):
+        l[c] = num(l[c]) if c in l else float("nan")
+    l["other_charges"] = l["other_charges"].fillna(0.0)
+    # what the borrower actually paid, when it was recorded
+    l["asset_cost"] = (l["down_payment"].fillna(0.0) + l["principal"]).where(l["principal"] > 0)
+    l["emi_principal"] = l["emi_paid"] - l["emi_interest"]
+    est = ("emi_std", "interest_full", "interest_est", "interest_saved", "balance_est")
+    for c in est:
         l[c] = float("nan")
     for i, r in l.iterrows():
-        k = r["tenure_months"] if closed[i] else 0
+        k = r["installments_paid"] if pd.notna(r["installments_paid"]) else (r["tenure_months"] if closed[i] else 0)
         res = emi_schedule(r["principal"], r["interest_rate"], r["planned_months"], k if pd.notna(k) else None)
         if res:
-            l.loc[i, "emi_std"], l.loc[i, "interest_full"] = res["emi"], res["interest_full"]
-            if closed[i] and pd.notna(r["tenure_months"]):
-                l.loc[i, ["interest_paid", "interest_saved", "balance_cleared"]] = [
-                    res["interest_paid"], res["interest_saved"], res["balance_cleared"]]
+            l.loc[i, ["emi_std", "interest_full"]] = [res["emi"], res["interest_full"]]
+            if closed[i] and pd.notna(k):
+                l.loc[i, ["interest_est", "balance_est"]] = [res["interest_paid"], res["balance_cleared"]]
+    # actuals win over the calculator estimate
+    l["interest_paid"] = l["emi_interest"].where(l["emi_interest"].notna(), l["interest_est"])
+    l["balance_cleared"] = (l["principal"] - l["emi_principal"]).where(l["emi_principal"].notna(), l["balance_est"])
+    l.loc[~closed, ["balance_cleared"]] = float("nan")
+    l["cost_of_borrowing"] = (l["interest_paid"] + l["other_charges"]).where(l["interest_paid"].notna())
+    l["interest_saved"] = (l["interest_full"] - l["interest_paid"]).clip(lower=0).where(closed)
+    l["net_saved"] = l["interest_saved"] - l["other_charges"]          # saving after the charges you paid
+    l["total_paid"] = (l["down_payment"].fillna(0.0) + l["emi_paid"] + l["closing_payment"]).where(
+        l["emi_paid"].notna() & l["closing_payment"].notna() & closed)
+    # does the closing payment equal the balance plus the charges? (difference, 0 when it does)
+    l["closing_gap"] = (l["closing_payment"] - l["balance_cleared"] - l["other_charges"]).where(
+        l["closing_payment"].notna() & l["balance_cleared"].notna())
     return l
 
 
@@ -385,8 +402,11 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
                   + (f" · Tenure: {int(r['tenure_months'])} months" if pd.notna(r['tenure_months']) else ""),
                   f"- Interest rate: {r['interest_rate']:g}% · EMI: {inr(r['emi'])}"]
         if r["status"] == "Closed" and pd.notna(r["interest_paid"]):
-            lines.append(f"- Interest paid: {inr(r['interest_paid'])} of {inr(r['interest_full'])} for the full "
-                         f"tenure, so {inr(r['interest_saved'])} saved by closing early")
+            lines.append(f"- Interest paid: {inr(r['interest_paid'])} · Other charges: {inr(r['other_charges'])} · "
+                         f"Cost of borrowing: {inr(r['cost_of_borrowing'])}")
+            if pd.notna(r["interest_saved"]):
+                lines.append(f"- Full-tenure interest would have been {inr(r['interest_full'])}; saved "
+                             f"{inr(r['interest_saved'])} by closing early ({inr(r['net_saved'])} after charges)")
         lines += [
                   f"- Start: {r['start_date'] or '–'} · End: {r['end_date'] or '–'}"]
         if r["link"]:

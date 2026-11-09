@@ -18,7 +18,7 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
 | **Source** | Income entries (Salary, Dividend/FD, PL Booking, Miscellaneous); per-month and per-year views; edit or delete any row. |
 | **Cash & Savings** | Savings account, FDs (with purpose and maturity), EPF, NPS, PPF/RD, short-term goals with progress bars. |
 | **Insurance** | Policies with links, sum assured, premium per month / per year, upcoming dues, active/lapsed. |
-| **Loans** | Good / Bad / Worst debt, EMI, links, free-text details, and a downloadable Markdown write-up to share. |
+| **Loans** | Good / Bad / Worst debt, active and closed loans, one card per loan showing where the money went (down payment, instalment principal and interest, closing balance, other charges), the cost of borrowing, interest saved by closing early (standard EMI calculator) and a downloadable Markdown write-up. |
 | **Stocks** | Holdings by category (India high-quality/risky, index funds, MFs, ETFs, international stable/risky, REITs/InvITs, unlisted, crypto). Record buys, sells and dividends; average cost, % of portfolio, P/L, dividends received and the reason for each holding are calculated. |
 | **Gold & Silver** | Physical purchases with making charges, GST and other charges; valued at the per-gram price you type. |
 | **Real Estate** | Cost, cost per sq ft, extra charges, rent yield. Current value = today's price per sq ft × area. |
