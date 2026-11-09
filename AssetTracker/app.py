@@ -7,6 +7,7 @@ import streamlit as st
 
 import analytics as an
 import db
+import market
 
 st.set_page_config(page_title="Asset Tracker", page_icon=":material/account_balance:", layout="wide")
 
@@ -97,6 +98,41 @@ if "_backed_up" not in st.session_state:
 if "_flash" in st.session_state:
     st.toast(st.session_state.pop("_flash"))
 
+# ---- live prices: controls run BEFORE the data is loaded so refreshed prices are used straight away ----
+LIVE_OPTIONS = {"Off": None, "1 min": 60, "5 min": 300, "15 min": 900}
+with st.sidebar:
+    st.markdown("### :material/account_balance: Asset Tracker")
+    interval = LIVE_OPTIONS[st.selectbox("Live prices", list(LIVE_OPTIONS), index=2, key="live_every",
+                                         help="How often prices, USD→INR and gold/silver are fetched while this "
+                                              "page is open. Holdings need a Symbol (see Stocks tab).")]
+    refresh_now = st.button("Refresh now", icon=":material/refresh:", width="stretch")
+    with st.expander("USD → INR rate"):
+        use_manual = st.checkbox("Use my own rate", value=db.meta_get("fx_use_manual", "0") == "1", key="fx_use_manual_ui")
+        manual = st.number_input("₹ per $1", min_value=0.0, value=float(db.meta_get("fx_manual", 0) or 0),
+                                 format="%.4f", key="fx_manual_ui")
+        if st.button("Save rate", width="stretch"):
+            db.meta_set("fx_use_manual", "1" if use_manual else "0")
+            db.meta_set("fx_manual", manual)
+            flash("Rate saved.")
+            st.rerun()
+if refresh_now:
+    with st.spinner("Fetching live prices…"):
+        st.session_state["_live_res"] = market.refresh(force=True)
+elif interval and "_live_boot" not in st.session_state:
+    with st.spinner("Fetching live prices…"):
+        st.session_state["_live_res"] = market.refresh(max_age=interval)
+st.session_state["_live_boot"] = True
+
+if interval:
+    @st.fragment(run_every=interval)
+    def _live_ticker():
+        r = market.refresh(max_age=max(interval - 5, 30))
+        if r.get("changed"):
+            st.session_state["_live_res"] = r
+            st.rerun()  # redraw the whole app with the new prices
+    with st.sidebar:
+        _live_ticker()
+
 income = db.get_table("income")
 securities = db.get_table("securities")
 trades = db.get_table("trades")
@@ -108,28 +144,40 @@ metals = db.get_table("metals")
 real_estate = db.get_table("real_estate")
 notes = db.get_table("notes")
 prices = db.metal_prices()
-targets = db.get_targets()
+fx = db.usd_inr()
 
-positions, realised, pos_warnings = an.build_positions(securities, trades, dividends)
+positions, realised, pos_warnings = an.build_positions(securities, trades, dividends, fx)
 metals_f = an.metals_frame(metals, prices)
 re_f = an.real_estate_frame(real_estate)
 ins_f = an.insurance_frame(insurance)
 loans_f = an.loans_frame(loans)
-buckets = an.bucket_values(positions, metals_f, re_f)
-alloc = an.allocation(buckets, targets)
-invest_value, invest_cost = buckets["value"].sum(), buckets["invested"].sum()
 savings_total = an.num(savings["amount"]).sum()
 loans_total = loans_f["outstanding"].sum()
+buckets = an.bucket_values(positions, metals_f, re_f, savings_total)
+inv_b = buckets[buckets["bucket"] != db.SAVINGS_BUCKET]
+invest_value, invest_cost = inv_b["value"].sum(), inv_b["invested"].sum()
 
 with st.sidebar:
-    st.markdown("### :material/account_balance: Asset Tracker")
-    st.caption(f"Database: `{db.DB_PATH}`")
+    st.divider()
+    if fx:
+        when = db.meta_get("fx_time")
+        manual_on = db.meta_get("fx_use_manual", "0") == "1"
+        st.caption(f"**USD/INR {fx:,.4f}** · {'your own rate' if manual_on else 'live' + (' · ' + when[11:16] if when else '')}")
+    elif (securities["currency"] == "USD").any() or market.offline():
+        st.warning("No USD→INR rate yet: USD holdings are valued 1:1. Go online or set your own rate above.")
+    res = st.session_state.get("_live_res", {})
+    if res.get("skipped") == "offline":
+        st.caption("Offline mode (ASSET_OFFLINE=1): live prices are off.")
+    elif res.get("at"):
+        st.caption(f"Last refresh {res['at']}")
+        if res.get("failed"):
+            st.caption(":material/warning: No live quote for " + ", ".join(res["failed"]) + " (check Symbol)")
     if st.button("Back up now", icon=":material/backup:", width="stretch"):
         st.toast(f"Backup saved: {db.backup()}")
     with open(db.DB_PATH, "rb") as f:
         st.download_button("Download database", f.read(), file_name=f"assets-{date.today()}.db",
                            icon=":material/download:", width="stretch")
-    st.caption("All amounts are in ₹. International holdings: enter values converted to ₹.")
+    st.caption("All amounts are in ₹. USD holdings are converted at the live rate.")
 
 st.title("Asset Tracker")
 tabs = st.tabs(["Summary", "Source", "Cash & Savings", "Insurance", "Loans", "Stocks",
@@ -151,19 +199,25 @@ with tabs[0]:
                      help="Dividends count as Dividend/FD; sells count as PL Booking. Turn off if you also type "
                           "them on the Source sheet, to avoid double counting.", key="sum_auto")
     inc = an.income_frame(income, dividends, realised, auto)
-    years = sorted(inc["year"].unique(), reverse=True) or [date.today().year]
-    year = st.selectbox("Year", years, key="sum_year")
-    pm = an.income_pivot(inc, year)
-    total_year = pm.to_numpy().sum()
+    years = sorted(inc["year"].unique(), reverse=True)
+    period = st.selectbox("Period", ["All time"] + years, key="sum_year",
+                          help="Drives the income chart, 'where the income went' and the ideal values below.")
+    yr = None if period == "All time" else period
+    if yr:
+        pm, xs = an.income_pivot(inc, yr), MONTHS
+    else:
+        pm = an.income_pivot(inc, None, by="year")
+        xs = [str(c_) for c_ in pm.columns]
+    income_total = float(pm.to_numpy().sum())
     left, right = st.columns([3, 2])
     with left:
         fig = go.Figure()
         for src, row in pm.iterrows():
             if row.abs().sum():
-                fig.add_bar(x=MONTHS, y=row.values, name=src, marker_color=SOURCE_COLORS.get(src, MUTED))
+                fig.add_bar(x=xs, y=row.values, name=src, marker_color=SOURCE_COLORS.get(src, MUTED))
         fig.update_layout(barmode="relative")
         fig.update_yaxes(tickprefix="₹", tickformat="~s")
-        show(style(fig, f"Income by month, {year}: {an.inr(total_year)}"))
+        show(style(fig, f"Income {'by month, ' + str(yr) if yr else 'by year'}: {an.inr(income_total)}"))
     with right:
         by_src = pm.sum(axis=1)
         by_src = by_src[by_src > 0]
@@ -175,14 +229,51 @@ with tabs[0]:
                                    textinfo="label+percent"))
             show(style(fig, "Where income came from").update_layout(showlegend=False))
 
+    # ---- where the income went:  Expense = Income - Investments - Savings
+    st.subheader("Where the income went")
+    flow = an.money_flow(income_total, an.stock_net_invested(trades, securities, realised, fx),
+                         metals_f, re_f, savings, yr)
+    c = st.columns(5)
+    kpi(c[0], "Income", flow["income"])
+    kpi(c[1], "Invested", flow["invested"], help="New money put into stocks/funds, gold & silver and property")
+    kpi(c[2], "Saved", flow["saved"], help="Cash, FD, EPF, NPS and goal balances" + (
+        "; for a single year, only entries with a start date in it" if yr else ""))
+    kpi(c[3], "Expenses (left over)", flow["expense"], help="Income − Invested − Saved")
+    kpi(c[4], "Invested + saved", f"{flow['savings_rate_pct']:.0f}% of income")
+    st.caption("**Expenses = Income − Investments − Savings.** Whatever you earned and did not invest or save is "
+               "treated as spent. Investments are net of units sold (recycled capital is not counted twice).")
+    if flow["expense"] < 0:
+        st.warning("Invested + saved is more than the income recorded for this period. Add the missing income on "
+                   "the Source tab, or pick 'All time'.")
+    if flow["income"] > 0:
+        labels = ["Income", "Investments", "Saved", "Expenses", "Stocks & funds", "Gold & silver", "Real estate"]
+        links = [(0, 1, flow["invested"]), (0, 2, flow["saved"]), (0, 3, max(flow["expense"], 0)),
+                 (1, 4, flow["stocks"]), (1, 5, flow["metals"]), (1, 6, flow["real_estate"])]
+        links = [l for l in links if l[2] > 0]
+        fig = go.Figure(go.Sankey(
+            node=dict(label=labels, pad=18, thickness=14, color=[REAL, "#6250d6", "#1baf7a", "#eb6834",
+                                                                  "#a396ea", "#eda100", "#8c5a3c"]),
+            link=dict(source=[l[0] for l in links], target=[l[1] for l in links], value=[l[2] for l in links],
+                      color="rgba(137,135,129,0.25)")))
+        show(style(fig, "Income → investments, savings and expenses", height=300))
+
+    # ---- ideal vs reality:  Ideal = Income x %
     st.subheader("Investments: ideal vs reality")
-    if invest_value == 0 and not targets:
-        st.info("Add holdings on the Stocks, Gold & Silver and Real Estate tabs. Then set your ideal values below.")
+    pcts = db.get_target_pcts()
+    alloc = an.allocation(buckets, pcts, income_total)
+    planned = sum(pcts.values())
+    c = st.columns(3)
+    kpi(c[0], f"Income ({period})", income_total)
+    kpi(c[1], "Planned to invest + save", f"{planned:.1f}% of income")
+    kpi(c[2], "Left for expenses", f"{100 - planned:.1f}% of income")
+    st.caption("**Ideal = income × the % you set for each bucket.** Reality = current value of what you hold.")
+    if income_total == 0:
+        st.info("Ideal values are income × %, so they show once income is recorded on the Source tab.")
     a = alloc[(alloc["value"] > 0) | (alloc["target"] > 0)]
     left, right = st.columns([3, 2])
     with left:
         fig = go.Figure()
-        fig.add_bar(y=a["bucket"], x=a["target"], name="Ideal (your target)", orientation="h", marker_color=IDEAL)
+        fig.add_bar(y=a["bucket"], x=a["target"], name="Ideal (income × %)", orientation="h", marker_color=IDEAL)
         fig.add_bar(y=a["bucket"], x=a["value"], name="Reality (current value)", orientation="h", marker_color=REAL)
         fig.update_layout(barmode="group", yaxis=dict(autorange="reversed"))
         fig.update_xaxes(tickprefix="₹", tickformat="~s")
@@ -193,26 +284,29 @@ with tabs[0]:
             fig = go.Figure(go.Pie(labels=held["bucket"], values=held["value"], hole=0.55, sort=False,
                                    marker_colors=BUCKET_COLORS[:len(held)], textinfo="percent"))
             show(style(fig, "Current allocation"))
-    table = alloc[["bucket", "invested", "value", "actual_pct", "target", "target_pct", "gap"]].rename(columns={
-        "bucket": "Bucket", "invested": "Invested", "value": "Current value", "actual_pct": "Actual %",
-        "target": "Ideal ₹", "target_pct": "Ideal %", "gap": "Left to invest (−: over)"})
+    table = alloc[["bucket", "invested", "value", "actual_pct", "target_pct", "target", "gap"]].rename(columns={
+        "bucket": "Bucket", "invested": "Invested", "value": "Current value", "actual_pct": "Actual % of income",
+        "target_pct": "Ideal %", "target": "Ideal ₹", "gap": "Left to invest (−: over)"})
     st.dataframe(fmt_df(table, ["Invested", "Current value", "Ideal ₹", "Left to invest (−: over)"],
-                        ["Actual %", "Ideal %"]), hide_index=True, width="stretch")
+                        ["Actual % of income", "Ideal %"]), hide_index=True, width="stretch")
 
-    with st.expander("Set ideal values (your target investment per bucket)"):
+    with st.expander("Set ideal values (% of income per bucket)"):
         tdf = pd.DataFrame({"bucket": db.INVESTMENT_BUCKETS,
-                            "target": [targets.get(b, 0.0) for b in db.INVESTMENT_BUCKETS]})
+                            "pct": [pcts.get(b, 0.0) for b in db.INVESTMENT_BUCKETS]})
         ted = st.data_editor(tdf, hide_index=True, width="stretch", key=f"targets_{version('targets')}",
                              disabled=["bucket"], column_config={
-                                 "bucket": "Bucket", "target": st.column_config.NumberColumn(
-                                     "Ideal amount (₹)", min_value=0, format="%.0f")})
+                                 "bucket": "Bucket", "pct": st.column_config.NumberColumn(
+                                     "% of income", min_value=0, max_value=100, format="%.1f")})
+        st.caption(f"Total {ted['pct'].fillna(0).sum():.1f}%. What is not allocated is your expense budget. "
+                   "0 means no target.")
         if st.button("Save ideal values", type="primary", key="save_targets"):
-            db.set_targets(dict(zip(ted["bucket"], ted["target"])))
-            flash("Ideal values saved.")
-            bump("targets")
-            st.rerun()
-        st.caption("Enter the amount you would like to hold in each bucket; 0 means no target. "
-                   "The % columns compare the shape of your plan with the shape of reality.")
+            if ted["pct"].fillna(0).sum() > 100.0001:
+                st.error("The percentages add up to more than 100%.")
+            else:
+                db.set_target_pcts(dict(zip(ted["bucket"], ted["pct"])))
+                flash("Ideal values saved.")
+                bump("targets")
+                st.rerun()
 
 # ================================================================== 2. SOURCE (income)
 with tabs[1]:
@@ -449,14 +543,20 @@ with tabs[5]:
     with a1.popover("Add holding", icon=":material/add:", width="stretch"):
         with st.form("add_sec", clear_on_submit=True):
             nm = st.text_input("Name")
-            sym = st.text_input("Symbol / code (optional)")
+            sym = st.text_input("Symbol for live price (optional)", placeholder="RELIANCE.NS · AAPL · BTC-INR · 119551",
+                                help="Yahoo Finance ticker (.NS / .BO for Indian stocks), or an AMFI scheme code "
+                                     "for mutual funds. Leave blank for manual pricing (e.g. unlisted shares).")
             cat = st.selectbox("Category", db.SECURITY_CATEGORIES)
+            ccy = st.radio("Price currency", db.CURRENCIES, horizontal=True,
+                           help="USD holdings are converted to ₹ at the live USD/INR rate.")
             why = st.text_area("Why am I investing in this?", height=80)
-            cp = st.number_input("Current price (₹)", min_value=0.0, format="%.2f")
+            cp = st.number_input("Current price (in that currency)", min_value=0.0, format="%.2f",
+                                 help="Optional when a symbol is set: it is fetched live.")
             st.caption("First purchase (leave quantity at 0 to skip)")
             q = st.number_input("Quantity", min_value=0.0, format="%.4f")
-            p = st.number_input("Buy price (₹)", min_value=0.0, format="%.2f")
-            fe = st.number_input("Fees / brokerage (₹)", min_value=0.0, format="%.2f")
+            p = st.number_input("Buy price (in that currency)", min_value=0.0, format="%.2f")
+            fe = st.number_input("Fees / brokerage (in that currency)", min_value=0.0, format="%.2f")
+            fxr = st.number_input("USD→INR rate at purchase (USD only)", min_value=0.0, value=float(fx), format="%.4f")
             dt_ = st.date_input("Bought on", date.today())
             if st.form_submit_button("Add holding", type="primary"):
                 if not nm.strip():
@@ -465,12 +565,12 @@ with tabs[5]:
                     st.error("A holding with this name exists. Use Add trade instead.")
                 else:
                     sid = db.insert("securities", {"name": nm.strip(), "symbol": sym, "category": cat, "reason": why,
-                                                   "current_price": cp or None,
+                                                   "current_price": cp or None, "currency": ccy,
                                                    "price_date": date.today() if cp else None})
                     if q > 0:
                         db.insert("trades", {"security_id": sid, "date": dt_, "side": "Buy", "qty": q, "price": p,
-                                             "fees": fe or None})
-                    flash(f"{nm.strip()} added.")
+                                             "fees": fe or None, "fx_rate": (fxr or None) if ccy == "USD" else None})
+                    flash(f"{nm.strip()} added." + (" Live price will load on the next refresh." if sym.strip() else ""))
                     st.rerun()
     with a2.popover("Add trade (buy / sell)", icon=":material/swap_horiz:", width="stretch"):
         if not names:
@@ -481,14 +581,18 @@ with tabs[5]:
                 side = st.radio("Side", ["Buy", "Sell"], horizontal=True)
                 dt_ = st.date_input("Date", date.today())
                 q = st.number_input("Quantity", min_value=0.0, format="%.4f")
-                p = st.number_input("Price per unit (₹)", min_value=0.0, format="%.2f")
-                fe = st.number_input("Fees / brokerage / taxes (₹)", min_value=0.0, format="%.2f")
+                p = st.number_input("Price per unit (in the holding's currency)", min_value=0.0, format="%.2f")
+                fe = st.number_input("Fees / brokerage / taxes (same currency)", min_value=0.0, format="%.2f")
+                fxr = st.number_input("USD→INR rate on that day (USD holdings only)", min_value=0.0,
+                                      value=float(fx), format="%.4f",
+                                      help="Locks in the rupee cost of this trade. Defaults to today's rate.")
                 nt = st.text_input("Note")
                 if st.form_submit_button("Save trade", type="primary"):
                     if q > 0 and p > 0:
                         sid = int(securities.loc[securities["name"] == who, "id"].iloc[0])
+                        is_usd = securities.loc[securities["id"] == sid, "currency"].iloc[0] == "USD"
                         db.insert("trades", {"security_id": sid, "date": dt_, "side": side, "qty": q, "price": p,
-                                             "fees": fe or None, "note": nt})
+                                             "fees": fe or None, "note": nt, "fx_rate": (fxr or None) if is_usd else None})
                         if pd.isna(pd.to_numeric(securities.loc[securities["id"] == sid, "current_price"]).iloc[0]):
                             db.update_row("securities", sid, {"current_price": p, "price_date": dt_})
                         flash(f"{side} saved.")
@@ -502,7 +606,8 @@ with tabs[5]:
             with st.form("add_div", clear_on_submit=True):
                 who = st.selectbox("Holding", names, key="div_who")
                 dt_ = st.date_input("Received on", date.today(), key="div_date")
-                amt = st.number_input("Amount (₹)", min_value=0.0, format="%.2f")
+                amt = st.number_input("Amount received (₹)", min_value=0.0, format="%.2f",
+                                      help="In rupees, as credited to your bank.")
                 nt = st.text_input("Note", key="div_note")
                 if st.form_submit_button("Save dividend", type="primary"):
                     if amt > 0:
@@ -521,17 +626,18 @@ with tabs[5]:
     if view.empty:
         st.info("No holdings to show yet. Use Add holding above.")
     else:
-        t = view[["name", "category", "qty", "avg_price", "first_buy", "last_buy", "invested", "current_price",
-                  "value", "pnl", "pnl_pct", "weight_pct", "dividends", "last_dividend", "realised", "reason"]]
+        t = view[["name", "category", "currency", "qty", "avg_price", "first_buy", "last_buy", "invested",
+                  "current_price", "price_date", "value", "pnl", "pnl_pct", "weight_pct", "dividends", "last_dividend", "realised", "reason"]]
         st.dataframe(t, hide_index=True, width="stretch", column_config={
-            "name": "Holding", "category": "Category", "qty": st.column_config.NumberColumn("Units", format="%.4g"),
-            "avg_price": st.column_config.NumberColumn("Avg buy price", format="₹%.2f"),
+            "name": "Holding", "category": "Category", "currency": "Ccy",
+            "price_date": st.column_config.DateColumn("Price as of"), "qty": st.column_config.NumberColumn("Units", format="%.4g"),
+            "avg_price": st.column_config.NumberColumn("Avg buy price", format="%.2f", help="In the holding's own currency"),
             "first_buy": st.column_config.DateColumn("First bought"),
             "last_buy": st.column_config.DateColumn("Last bought"),
-            "invested": st.column_config.NumberColumn("Invested", format="₹%.0f"),
-            "current_price": st.column_config.NumberColumn("Price now", format="₹%.2f"),
-            "value": st.column_config.NumberColumn("Current value", format="₹%.0f"),
-            "pnl": st.column_config.NumberColumn("Unrealised P/L", format="₹%.0f"),
+            "invested": st.column_config.NumberColumn("Invested (₹)", format="₹%.0f"),
+            "current_price": st.column_config.NumberColumn("Price now", format="%.2f", help="In the holding's own currency"),
+            "value": st.column_config.NumberColumn("Current value (₹)", format="₹%.0f"),
+            "pnl": st.column_config.NumberColumn("Unrealised P/L (₹)", format="₹%.0f"),
             "pnl_pct": st.column_config.NumberColumn("P/L %", format="%.1f%%"),
             "weight_pct": st.column_config.ProgressColumn("% of portfolio", format="%.1f%%", min_value=0, max_value=100),
             "dividends": st.column_config.NumberColumn("Dividends", format="₹%.0f"),
@@ -571,7 +677,8 @@ with tabs[5]:
         id2name = dict(zip(securities["id"], securities["name"]))
         name2id = {v: k for k, v in id2name.items()}
         with e1:
-            st.caption("Update **Price now** here whenever you want fresh valuations. "
+            st.caption("Holdings with a **Symbol** are priced live (a typed price is replaced on the next refresh); "
+                       "leave Symbol blank to price a holding yourself. "
                        "Deleting a holding also deletes its trades and dividends (a backup is taken first).")
 
             def stamp_price(df):
@@ -582,15 +689,16 @@ with tabs[5]:
                         df.at[i, "price_date"] = date.today()
                 return df
             edit_table("securities", securities, securities, {
-                "name": st.column_config.TextColumn("Name", required=True), "symbol": "Symbol",
+                "name": st.column_config.TextColumn("Name", required=True), "symbol": st.column_config.TextColumn("Symbol (live price)", help="RELIANCE.NS, AAPL, BTC-INR or an AMFI code"),
+                "currency": st.column_config.SelectboxColumn("Ccy", options=db.CURRENCIES, required=True),
                 "category": st.column_config.SelectboxColumn("Category", options=db.SECURITY_CATEGORIES, required=True),
                 "reason": st.column_config.TextColumn("Why I hold it", width="large"),
-                "current_price": st.column_config.NumberColumn("Price now (₹)", min_value=0, format="%.2f"),
-                "price_date": st.column_config.DateColumn("Price as of")}, ("name", "category"), "securities",
+                "current_price": st.column_config.NumberColumn("Price now (own currency)", min_value=0, format="%.2f"),
+                "price_date": st.column_config.DateColumn("Price as of")}, ("name", "category", "currency"), "securities",
                 to_db=stamp_price)
         with e2:
             tshow = trades.assign(security=trades["security_id"].map(id2name)).drop(columns=["security_id"])
-            tshow = tshow[["id", "security", "date", "side", "qty", "price", "fees", "note"]]
+            tshow = tshow[["id", "security", "date", "side", "qty", "price", "fees", "fx_rate", "note"]]
 
             def to_db_t(df):
                 df = df.copy()
@@ -601,7 +709,10 @@ with tabs[5]:
                 "date": st.column_config.DateColumn("Date", required=True),
                 "side": st.column_config.SelectboxColumn("Side", options=["Buy", "Sell"], required=True),
                 "qty": st.column_config.NumberColumn("Units", min_value=0, format="%.4f", required=True),
-                "price": money_cfg("Price (₹)", required=True), "fees": money_cfg("Fees (₹)"), "note": "Note"},
+                "price": money_cfg("Price (own currency)", required=True), "fees": money_cfg("Fees (own currency)"),
+                "fx_rate": st.column_config.NumberColumn("USD→INR", min_value=0, format="%.4f",
+                                                          help="USD holdings only; blank = today's rate"),
+                "note": "Note"},
                 ("security_id", "date", "side", "qty", "price"), "trades", to_db=to_db_t)
         with e3:
             dshow = dividends.assign(security=dividends["security_id"].map(id2name)).drop(columns=["security_id"])
@@ -619,15 +730,34 @@ with tabs[5]:
 
 # ================================================================== 7. GOLD & SILVER
 with tabs[6]:
-    st.caption("Physical gold and silver (coins, bars, jewellery). Type today's price per gram to value your holdings.")
-    p1, p2, p3 = st.columns([1, 1, 1], vertical_alignment="bottom")
-    gp = p1.number_input("Gold price today (₹ / g)", min_value=0.0, value=prices["Gold"], format="%.2f", key="gp")
-    sp = p2.number_input("Silver price today (₹ / g)", min_value=0.0, value=prices["Silver"], format="%.2f", key="sp")
-    if p3.button("Save prices", type="primary"):
-        db.meta_set("price_gold", gp)
-        db.meta_set("price_silver", sp)
-        flash("Prices saved.")
+    st.caption("Physical gold and silver (coins, bars, jewellery), valued per gram.")
+    auto_m = db.meta_get("metal_auto", "1") == "1"
+    p0, p1, p2 = st.columns([1.4, 1, 1], vertical_alignment="bottom")
+    live_m = p0.checkbox("Keep prices live", value=auto_m, key="metal_live",
+                         help="International spot price × USD/INR ÷ 31.1035 g/oz, plus your local premium.")
+    prem_g = p1.number_input("Gold local premium %", value=float(db.meta_get("premium_gold", 0) or 0), step=0.5,
+                             format="%.2f", key="prem_g", help="Import duty, GST and dealer margin: Indian retail "
+                             "prices run above the international price. Adjust until it matches your jeweller.")
+    prem_s = p2.number_input("Silver local premium %", value=float(db.meta_get("premium_silver", 0) or 0), step=0.5,
+                             format="%.2f", key="prem_s")
+    q1, q2, q3 = st.columns([1, 1, 1], vertical_alignment="bottom")
+    gp = q1.number_input("Gold price (₹ / g)", min_value=0.0, value=prices["Gold"], format="%.2f",
+                         key=f"gp_{prices['Gold']}", disabled=live_m)
+    sp = q2.number_input("Silver price (₹ / g)", min_value=0.0, value=prices["Silver"], format="%.2f",
+                         key=f"sp_{prices['Silver']}", disabled=live_m)
+    if q3.button("Save price settings", type="primary"):
+        db.meta_set("metal_auto", "1" if live_m else "0")
+        db.meta_set("premium_gold", prem_g)
+        db.meta_set("premium_silver", prem_s)
+        if not live_m:
+            db.meta_set("price_gold", gp)
+            db.meta_set("price_silver", sp)
+        else:
+            market.refresh(force=True)
+        flash("Price settings saved.")
         st.rerun()
+    if live_m and not (prices["Gold"] or prices["Silver"]):
+        st.info("No live price yet. Press Refresh now in the sidebar, or turn off 'Keep prices live' to type them.")
     for metal in db.METALS:
         m = metals_f[metals_f["metal"] == metal]
         c = st.columns(5)
