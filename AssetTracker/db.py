@@ -15,7 +15,8 @@ DB_PATH = os.environ.get("ASSET_DB", os.path.join(BASE_DIR, "data", "assets.db")
 BACKUP_DIR = os.environ.get("ASSET_BACKUP_DIR", os.path.join(BASE_DIR, "backups"))
 
 # ---- fixed vocabularies -------------------------------------------------------------------------------
-INCOME_SOURCES = ["Salary", "Dividend/FD", "PL Booking", "Miscellaneous"]
+TAX_SOURCE = "Taxes Paid"  # entered as a positive amount, subtracted from income totals
+INCOME_SOURCES = ["Salary", "Dividend/FD", "PL Booking", "Miscellaneous", TAX_SOURCE]
 SECURITY_CATEGORIES = [
     "India - High Quality", "India - Risky", "Index Funds", "Mutual Funds", "ETFs",
     "International - Stable", "International - Risky", "REITs/InvITs", "Unlisted Stocks", "Crypto",

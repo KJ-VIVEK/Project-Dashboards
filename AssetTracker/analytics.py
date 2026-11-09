@@ -123,7 +123,9 @@ def build_positions(securities: pd.DataFrame, trades: pd.DataFrame, dividends: p
 # ---------------------------------------------------------------- income
 def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.DataFrame, include_auto=True) -> pd.DataFrame:
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab."""
-    parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": num(income["amount"]),
+    amount = num(income["amount"])
+    amount = amount.where(income["source"] != db.TAX_SOURCE, -amount.abs())  # taxes reduce the total
+    parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
                            "origin": "Source sheet"})]
     if include_auto:
         parts.append(pd.DataFrame({"date": dividends["date"], "source": "Dividend/FD",

@@ -240,3 +240,13 @@ def test_blank_fees_and_currency_do_not_poison_numbers():
     r = pos.iloc[0]
     assert r.invested == 100 and r.value == 120 and r.currency == "INR"
     assert an.stock_net_invested(t, s, pos.iloc[0:0].assign(date=[], cost_sold=[]), 88.0)["all"] == 100
+
+
+def test_taxes_paid_are_subtracted_from_income():
+    inc = pd.DataFrame({"date": [date(2025, 1, 31), date(2025, 1, 31), date(2025, 2, 28)],
+                        "source": ["Salary", "Taxes Paid", "Taxes Paid"], "amount": [1000.0, 150.0, -50.0]})
+    none = pd.DataFrame({"date": [], "amount": []})
+    df = an.income_frame(inc, none, pd.DataFrame({"date": [], "pnl": []}))
+    assert df["amount"].sum() == 1000 - 150 - 50
+    p = an.income_pivot(df, 2025)
+    assert p.loc["Taxes Paid", 1] == -150 and p.loc["Taxes Paid", 2] == -50 and p.to_numpy().sum() == 800
