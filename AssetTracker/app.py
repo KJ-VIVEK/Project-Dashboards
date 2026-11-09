@@ -378,19 +378,28 @@ with tabs[1]:
     st.caption("Everything you earn, by month. Enter **Taxes Paid** and **Other Deductions** (PF, professional tax, anything else taken "
                "off) as positive amounts: they are subtracted from the totals, so income shown is after deductions. Dividends and realised profit/loss from the Stocks tab "
                "appear in the tables below automatically (switch this off on the Summary tab).")
-    with st.form("add_income", clear_on_submit=True):
-        c = st.columns([1, 1.2, 2, 1.2, 0.8], vertical_alignment="bottom")
+    with st.form("add_income", clear_on_submit=True, border=False):
+        c = st.columns([1, 1.2, 2], vertical_alignment="bottom")
         d_ = dinput(c[0], "Date", date.today())
-        s_ = c[1].selectbox("Section", db.INCOME_SOURCES)
+        s_ = c[1].selectbox("Source", [x for x in db.INCOME_SOURCES if x not in db.DEDUCTION_SOURCES])
         desc = c[2].text_input("Description", placeholder="e.g. Employer name, FD interest, Swing trade")
-        amt = c[3].number_input("Amount (₹)", min_value=0.0, step=1000.0, format="%.2f")
-        if c[4].form_submit_button("Add", width="stretch", type="primary"):
-            if amt > 0:
-                db.insert("income", {"date": d_, "source": s_, "description": desc, "amount": amt})
-                flash("Income added.")
-                st.rerun()
+        c = st.columns([1, 1, 1, 0.8], vertical_alignment="bottom")
+        amt = c[0].number_input("Amount (₹)", min_value=0.0, step=1000.0, format="%.2f")
+        tax = c[1].number_input("Taxes paid (₹)", min_value=0.0, step=500.0, format="%.2f",
+                                help="Deducted on this date. Saved as a Taxes Paid row.")
+        oth = c[2].number_input("Other deductions (₹)", min_value=0.0, step=500.0, format="%.2f",
+                                help="PF, professional tax, anything else taken off on this date.")
+        if c[3].form_submit_button("Add", width="stretch", type="primary"):
+            if amt <= 0 and tax <= 0 and oth <= 0:
+                st.error("Enter an amount, taxes or deductions above zero.")
             else:
-                st.error("Enter an amount above zero.")
+                note = desc.strip()
+                for src, val, text in ((s_, amt, note), (db.TAX_SOURCE, tax, f"Tax: {note}" if note else "Tax"),
+                                       (db.OTHER_DEDUCTION_SOURCE, oth, f"Deduction: {note}" if note else "Deduction")):
+                    if val > 0:
+                        db.insert("income", {"date": d_, "source": src, "description": text, "amount": val})
+                flash("Entry added.")
+                st.rerun()
 
     inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True),
                           prem_paid if st.session_state.get("sum_prem", True) else None)
