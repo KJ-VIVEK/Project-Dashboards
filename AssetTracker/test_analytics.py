@@ -599,3 +599,65 @@ def test_paid_follows_the_payment_dates_for_every_frequency():
     assert len(an.insurance_payments(ended, None, today=TODAY)) == 4          # Jan 31, Feb 28, Mar 31, Apr 30
     y = an.insurance_frame(_policy(premium=14379.0, frequency="Yearly", start_date=date(2026, 8, 1)), today=TODAY).iloc[0]
     assert y["paid_to_date"] == 14379 and y["year_cost"] == pytest.approx(14379 * 5 / 12)    # paid whole; cost spread
+
+
+# ---------------------------------------------------------------- validation of edits
+import validation as val
+
+
+def _df(**cols):
+    return pd.DataFrame({k: [v] for k, v in cols.items()})
+
+
+def test_valid_rows_give_no_errors():
+    assert val.validate("insurance", _df(id=1, name="Term", premium=1000.0, frequency="Yearly", type="Term Life",
+                                         start_date=date(2025, 1, 1), end_date=date(2045, 1, 1),
+                                         insured_for="Me", sum_assured=1e7), ("name", "premium", "frequency")) == []
+    assert val.validate("income", _df(id=1, date=date(2026, 1, 5), source="PL Booking", amount=-500.0)) == []
+
+
+def test_missing_required_values_are_reported_not_skipped():
+    msgs = val.validate("insurance", _df(id=1, name="Term", premium=None, frequency=None),
+                        ("name", "premium", "frequency"))
+    assert any("Premium is required" in m for m in msgs) and any("Paid is required" in m for m in msgs)
+    assert all(m.startswith("Row 1 (Term):") for m in msgs)
+    assert val.validate("trades", _df(id=1, security_id=float("nan"), date=date(2026, 1, 1), side="Buy", qty=1, price=1),
+                        ("security_id", "date", "side", "qty", "price")) == ["Row 1: Holding is required."]
+
+
+def test_wrong_values_are_reported_in_words():
+    m = val.validate("insurance", _df(id=1, name="Term", premium=-5.0, frequency="Fortnightly", sum_assured=-1.0,
+                                      insured_for="Cat"))
+    text = " ".join(m)
+    assert "Premium must be above 0 (got -5)" in text and "Paid “Fortnightly” is not one of" in text
+    assert "Sum assured cannot be negative" in text and "Insured “Cat”" in text
+    assert any("must be a number" in x for x in val.validate("loans", _df(id=1, name="L", principal="abc")))
+    assert any("between 0 and 100" in x for x in val.validate("loans", _df(id=1, name="L", interest_rate=250.0)))
+    assert any("whole number" in x for x in val.validate("loans", _df(id=1, name="L", installments_paid=2.5)))
+    assert any("Amount cannot be negative" in x for x in val.validate("income", _df(id=1, source="Salary", amount=-1.0)))
+    assert any("cannot be zero" in x for x in val.validate("income", _df(id=1, source="Salary", amount=0.0)))
+    assert any("Purity “925” does not exist for Gold" in x
+               for x in val.validate("metals", _df(id=1, metal="Gold", purity="925", grams=1.0, rate_per_g=1.0)))
+
+
+def test_dates_must_be_real_in_range_and_in_order():
+    m = val.validate("insurance", _df(id=1, name="P", premium=1.0, frequency="Yearly",
+                                      start_date=date(2026, 5, 1), end_date=date(2026, 1, 1)))
+    assert m == ["Row 1 (P): End date (2026-01-01) is before start date (2026-05-01)."]
+    assert any("outside 1950-2100" in x for x in val.validate("loans", _df(id=1, name="L", start_date=date(2150, 1, 1))))
+    assert any("not a valid date" in x for x in val.validate("loans", _df(id=1, name="L", start_date="soon")))
+    assert any("Closed on" in x and "before" in x for x in val.validate(
+        "loans", _df(id=1, name="L", start_date=date(2025, 5, 1), closed_date=date(2025, 1, 1))))
+    assert any("needs both a start and an end" in x for x in val.validate(
+        "insurance", _df(id=1, name="P", premium=1.0, frequency=db.ONE_TIME, start_date=date(2026, 1, 1))))
+    assert any("Interest in the installments" in x for x in val.validate(
+        "loans", _df(id=1, name="L", emi_paid=100.0, emi_interest=200.0)))
+
+
+def test_every_editable_table_has_rules_and_row_numbers_count_from_one():
+    for t in ("income", "savings", "insurance", "insurance_revisions", "loans", "securities", "trades", "dividends",
+              "metals", "real_estate"):
+        assert t in db.TABLES and val.validate(t, pd.DataFrame(columns=["id"])) == []
+    two = pd.DataFrame([{"id": 1, "name": "A", "premium": 5.0, "frequency": "Yearly"},
+                        {"id": 2, "name": "B", "premium": 0.0, "frequency": "Yearly"}])
+    assert val.validate("insurance", two) == ["Row 2 (B): Premium must be above 0 (got 0)."]
