@@ -20,6 +20,7 @@ LOAN_COLORS = {"Good": "#1baf7a", "Bad": "#eda100", "Worst": "#d6403a"}
 BUCKET_COLORS = ["#2a78d6", "#6aa7ea", "#1baf7a", "#74d1ac", "#eda100", "#f3c85c", "#6250d6", "#a396ea",
                  "#eb6834", "#d6403a", "#c9a227", "#9aa0a6", "#8c5a3c"]
 IDEAL, REAL = "#898781", "#2a78d6"
+MEMO_ROW = "EPF / NPS / returned (not in Total)"
 
 
 # ------------------------------------------------------------------ helpers
@@ -416,7 +417,13 @@ with tabs[1]:
         pv.columns = [str(c_) for c_ in pv.columns]
     pv["Total"] = pv.sum(axis=1)
     pv.loc["Total"] = pv.sum()
-    st.dataframe(pv.map(lambda v: an.inr(v) if v else "·"), width="stretch")
+    shown = pv.map(lambda v: an.inr(v) if v else "·")
+    memo = an.memo_pivot(income, yr if view == "Per month" else None, "month" if view == "Per month" else "year")
+    memo = memo.reindex(range(1, 13) if view == "Per month" else [int(c_) for c_ in pv.columns[:-1]], fill_value=0.0)
+    shown.loc[MEMO_ROW] = [an.inr(v) if v else "·" for v in list(memo.values) + [memo.sum()]]
+    st.dataframe(shown, width="stretch")
+    st.caption(f"“{MEMO_ROW}” is money taken off an inflow that is still yours, so it is shown for reference and is not "
+               "part of the Total above.")
 
     # money taken off an inflow but not lost, for the period shown above
     dts_all = pd.to_datetime(income["date"], errors="coerce")

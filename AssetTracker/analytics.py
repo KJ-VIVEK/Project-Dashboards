@@ -608,6 +608,17 @@ def loans_markdown(loans: pd.DataFrame, title="Loan summary") -> str:
     return "\n".join(lines)
 
 
+def memo_pivot(income: pd.DataFrame, year: int | None, by="month", col="other_deductions") -> pd.Series:
+    """One row for the Source table: the amount in `col` of the raw income rows (EPF / NPS / returned), per month of
+    `year` (by='month') or per year (by='year'). It is recorded only, so it is kept out of every total."""
+    dt = pd.to_datetime(income["date"], errors="coerce")
+    amt = num(income[col]) if col in income else pd.Series(0.0, index=income.index)
+    if by == "month":
+        s = amt[dt.dt.year == year].groupby(dt[dt.dt.year == year].dt.month).sum()
+        return s.reindex(range(1, 13), fill_value=0.0)
+    return amt[dt.notna()].groupby(dt[dt.notna()].dt.year).sum()
+
+
 def inflow_by_year(df: pd.DataFrame) -> pd.DataFrame:
     """Cash inflow per year: before tax, after tax, and the year-on-year change of the after-tax figure (%).
     `df` is an income_frame. YoY is NaN for the first year or when the previous year was zero or negative."""
