@@ -306,6 +306,9 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     l["net_saved"] = l["interest_saved"] - l["other_charges"]          # saving after the charges you paid
     l["total_paid"] = (l["down_payment"].fillna(0.0) + l["emi_paid"] + l["closing_payment"]).where(
         l["emi_paid"].notna() & l["closing_payment"].notna() & closed)
+    l["lender_paid"] = (l["emi_paid"] + l["closing_payment"]).where(
+        l["emi_paid"].notna() & l["closing_payment"].notna() & closed)   # everything paid to the lender, no down payment
+    l["lender_extra"] = l["lender_paid"] - l["principal"]               # = interest + other charges when it all adds up
     # does the closing payment equal the balance plus the charges? (difference, 0 when it does)
     l["closing_gap"] = (l["closing_payment"] - l["balance_cleared"] - l["other_charges"]).where(
         l["closing_payment"].notna() & l["balance_cleared"].notna())

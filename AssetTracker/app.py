@@ -577,6 +577,11 @@ with tabs[4]:
                     tl.append(f"{int(r['elapsed_months'])} months from start to closing")
                 tl.append(f"{r['start_date'] or '–'} → {r['closed_date'] or '–'}")
                 st.caption(" · ".join(tl))
+                if pd.notna(r["lender_paid"]):
+                    st.markdown(f"**Paid to the lender:** {an.inr(r['lender_paid'])} "
+                                f"(instalments {an.inr(r['emi_paid'])} + closing {an.inr(r['closing_payment'])}) "
+                                f"− loan {an.inr(r['principal'])} = **{an.inr(r['lender_extra'])}** "
+                                f"(interest + other charges)")
                 rows = [("Down payment", r["down_payment"], "your pocket, day one"),
                         ("Instalments: principal", r["emi_principal"], "repaid through EMIs"),
                         ("Instalments: interest", r["emi_interest"] if pd.notna(r["emi_interest"]) else r["interest_est"],
