@@ -31,6 +31,7 @@ SAVINGS_BUCKET = "Cash & Savings"
 INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
 SAVINGS_KINDS = ["Savings Account", "Cash in Hand", "FD", "RD", "EPF", "NPS", "PPF", "Short-term Goal"]
+INSURED_FOR = ["Me", "Family", "Spouse", "Parents", "Child", "Vehicle", "Other"]   # whom a policy covers
 INSURANCE_TYPES = ["Term Life", "Health", "Life/Endowment", "Vehicle", "Home", "Travel", "Other"]
 FREQUENCIES = {"Monthly": 12, "Quarterly": 4, "Half-Yearly": 2, "Yearly": 1}
 ONE_TIME = "One-time (whole period)"      # one premium that covers the whole start-to-end period (e.g. a 5-year TP)
@@ -66,7 +67,7 @@ CREATE TABLE IF NOT EXISTS insurance (
     name TEXT NOT NULL, type TEXT, provider TEXT, policy_no TEXT, sum_assured REAL,
     premium REAL NOT NULL, frequency TEXT NOT NULL, next_due TEXT, link TEXT, notes TEXT,
     active INTEGER NOT NULL DEFAULT 1, start_date TEXT, end_date TEXT,
-    parent_id INTEGER, component TEXT);
+    parent_id INTEGER, component TEXT, insured_for TEXT);
 CREATE TABLE IF NOT EXISTS insurance_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     insurance_id INTEGER NOT NULL, effective_from TEXT NOT NULL, premium REAL NOT NULL, note TEXT);
@@ -103,7 +104,7 @@ TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
     "savings": (["kind", "name", "amount", "purpose", "interest_rate", "start_date", "maturity_date", "target", "note"],
                 {"start_date", "maturity_date"}, set()),
     "insurance": (["name", "type", "provider", "policy_no", "sum_assured", "premium", "frequency", "next_due",
-                   "link", "notes", "active", "start_date", "end_date", "parent_id", "component"],
+                   "link", "notes", "active", "start_date", "end_date", "parent_id", "component", "insured_for"],
                   {"next_due", "start_date", "end_date"}, {"active"}),
     "insurance_revisions": (["insurance_id", "effective_from", "premium", "note"], {"effective_from"}, set()),
     "loans": (["name", "lender", "category", "principal", "outstanding", "interest_rate", "emi", "start_date",
@@ -142,7 +143,8 @@ _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_
                ("loans", "other_charges", "REAL"), ("loans", "installments_paid", "INTEGER"),
                ("loans", "emi_paid", "REAL"), ("loans", "emi_interest", "REAL"), ("loans", "closing_payment", "REAL"),
                ("insurance", "start_date", "TEXT"), ("insurance", "end_date", "TEXT"),
-               ("insurance", "parent_id", "INTEGER"), ("insurance", "component", "TEXT")]
+               ("insurance", "parent_id", "INTEGER"), ("insurance", "component", "TEXT"),
+               ("insurance", "insured_for", "TEXT")]
 
 
 def init_db(path: str | None = None) -> None:
