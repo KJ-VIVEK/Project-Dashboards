@@ -633,7 +633,8 @@ with tabs[3]:
                 st.dataframe(kt, hide_index=True, width="stretch")
                 st.caption("A one-time premium covers its whole period and is spread over those months, so a "
                            "5-year Third Party premium shows as one fifth of it per year.")
-        nodate = pol[pol["paid_to_date"].isna()]["name"].tolist()
+        nodate = [f"{r['name']} ({an.inr(r['premium'])} {r['frequency'].lower()})"
+                  for _, r in pol[pol["paid_to_date"].isna()].iterrows()]
         if nodate:
             st.info("No start date, so no premium history: " + ", ".join(nodate) +
                     ". Add a start date to count what you paid (it is also subtracted from income on the Summary).")
