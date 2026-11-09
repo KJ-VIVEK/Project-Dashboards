@@ -15,7 +15,7 @@ st.set_page_config(page_title="Asset Tracker", page_icon=":material/account_bala
 MUTED = "#898781"
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 SOURCE_COLORS = {"Salary": "#2a78d6", "Dividend/FD": "#1baf7a", "PL Booking": "#eda100", "Miscellaneous": "#6250d6",
-                 "Taxes Paid": "#d6403a", "Insurance Premium": "#c2185b"}
+                 "Taxes Paid": "#d6403a", "Other Deductions": "#eb6834", "Insurance Premium": "#c2185b"}
 LOAN_COLORS = {"Good": "#1baf7a", "Bad": "#eda100", "Worst": "#d6403a"}
 BUCKET_COLORS = ["#2a78d6", "#6aa7ea", "#1baf7a", "#74d1ac", "#eda100", "#f3c85c", "#6250d6", "#a396ea",
                  "#eb6834", "#d6403a", "#c9a227", "#9aa0a6", "#8c5a3c"]
@@ -375,8 +375,8 @@ with tabs[0]:
 
 # ================================================================== 2. SOURCE (income)
 with tabs[1]:
-    st.caption("Everything you earn, by month. Enter **Taxes Paid** as a positive amount: it is subtracted from "
-               "the totals, so income shown is after tax. Dividends and realised profit/loss from the Stocks tab "
+    st.caption("Everything you earn, by month. Enter **Taxes Paid** and **Other Deductions** (PF, professional tax, anything else taken "
+               "off) as positive amounts: they are subtracted from the totals, so income shown is after deductions. Dividends and realised profit/loss from the Stocks tab "
                "appear in the tables below automatically (switch this off on the Summary tab).")
     with st.form("add_income", clear_on_submit=True):
         c = st.columns([1, 1.2, 2, 1.2, 0.8], vertical_alignment="bottom")

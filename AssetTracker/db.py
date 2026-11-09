@@ -17,7 +17,9 @@ BACKUP_DIR = os.environ.get("ASSET_BACKUP_DIR", os.path.join(BASE_DIR, "backups"
 # ---- fixed vocabularies -------------------------------------------------------------------------------
 TAX_SOURCE = "Taxes Paid"  # entered as a positive amount, subtracted from income totals
 PREMIUM_SOURCE = "Insurance Premium"  # derived from the Insurance tab, subtracted from income like taxes
-INCOME_SOURCES = ["Salary", "Dividend/FD", "PL Booking", "Miscellaneous", TAX_SOURCE]
+OTHER_DEDUCTION_SOURCE = "Other Deductions"  # PF, professional tax, loan recovery...: also positive, also subtracted
+DEDUCTION_SOURCES = [TAX_SOURCE, OTHER_DEDUCTION_SOURCE]
+INCOME_SOURCES = ["Salary", "Dividend/FD", "PL Booking", "Miscellaneous", TAX_SOURCE, OTHER_DEDUCTION_SOURCE]
 SECURITY_CATEGORIES = [
     "India - High Quality", "India - Risky", "Index Funds", "Mutual Funds", "ETFs",
     "International - Stable", "International - Risky", "REITs/InvITs", "Unlisted Stocks", "Crypto",

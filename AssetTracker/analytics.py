@@ -126,7 +126,7 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
     (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
-    amount = amount.where(income["source"] != db.TAX_SOURCE, -amount.abs())  # taxes reduce the total
+    amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes and other deductions reduce the total
     parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
                            "origin": "Source sheet"})]
     if include_auto:

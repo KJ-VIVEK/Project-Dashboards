@@ -661,3 +661,14 @@ def test_every_editable_table_has_rules_and_row_numbers_count_from_one():
     two = pd.DataFrame([{"id": 1, "name": "A", "premium": 5.0, "frequency": "Yearly"},
                         {"id": 2, "name": "B", "premium": 0.0, "frequency": "Yearly"}])
     assert val.validate("insurance", two) == ["Row 2 (B): Premium must be above 0 (got 0)."]
+
+
+def test_other_deductions_are_subtracted_like_taxes():
+    inc = pd.DataFrame({"date": [date(2025, 1, 31)] * 3, "source": ["Salary", "Taxes Paid", "Other Deductions"],
+                        "amount": [1000.0, 100.0, 40.0]})
+    none = pd.DataFrame({"date": [], "amount": []})
+    df = an.income_frame(inc, none, pd.DataFrame({"date": [], "pnl": []}))
+    assert df["amount"].sum() == 860
+    assert an.income_pivot(df, 2025).loc["Other Deductions", 1] == -40
+    assert not val.validate("income", pd.DataFrame({"id": [1], "date": [date(2025, 1, 31)], "source": ["Other Deductions"],
+                                                    "amount": [40.0]}))
