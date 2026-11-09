@@ -664,15 +664,17 @@ def rsu_table(income: pd.DataFrame, usd_inr: float | None) -> pd.DataFrame:
 
 
 def inflow_by_year(df: pd.DataFrame) -> pd.DataFrame:
-    """Cash inflow per year: before tax, after tax, and the year-on-year change of the after-tax figure (%).
+    """Cash inflow per year: before tax (gross), tax paid, after tax (net), and each one's year-on-year change (%):
+    gross_yoy_pct, tax_yoy_pct and yoy_pct (after tax).
     `df` is an income_frame. YoY is NaN for the first year or when the previous year was zero or negative."""
     if df.empty:
-        return pd.DataFrame(columns=["year", "gross", "tax", "net", "yoy_pct"])
+        return pd.DataFrame(columns=["year", "gross", "tax", "net", "yoy_pct", "gross_yoy_pct", "tax_yoy_pct"])
     g = df.groupby("year").apply(lambda d: pd.Series({
         "gross": d.loc[d["source"] != db.TAX_SOURCE, "amount"].sum(),
         "tax": -d.loc[d["source"] == db.TAX_SOURCE, "amount"].sum()}), include_groups=False)
     g["net"] = g["gross"] - g["tax"]
     g = g.reindex(range(int(g.index.min()), int(g.index.max()) + 1), fill_value=0.0)
-    prev = g["net"].shift(1)
-    g["yoy_pct"] = ((g["net"] - prev) / prev * 100).where(prev > 0)
+    for col, name in (("net", "yoy_pct"), ("gross", "gross_yoy_pct"), ("tax", "tax_yoy_pct")):
+        prev = g[col].shift(1)
+        g[name] = ((g[col] - prev) / prev * 100).where(prev > 0)
     return g.rename_axis("year").reset_index()
