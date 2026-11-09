@@ -135,6 +135,11 @@ def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None)
     c2.caption(hint or "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes.")
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fx_on(day):
+    return market.fx_on(day)
+
+
 def money_cfg(label, **kw):
     return st.column_config.NumberColumn(label, format="%.2f", min_value=0, **kw)
 
@@ -472,52 +477,83 @@ with tabs[1]:
                        "from the first year.")
 
     with st.expander("RSUs vested", icon=":material/currency_exchange:"):
-        st.caption("Enter the **quantity** that vested and the **buy price** per share in US$. They have not been sold, "
-                   "so the total is **quantity × buy price × today's USD → ₹ rate**, and it moves with the rate. "
-                   "Taxes paid on the vest (if any) are subtracted like any other tax.")
+        st.caption("When shares vest, some are sold straight away to pay the tax. Enter what **vested** (shares and buy "
+                   "price) and what was **sold for tax** (shares, sell price, date). The tax in ₹ is shares sold × sell "
+                   "price × the USD → ₹ rate **on the sell date**, and it is deducted from income. The shares you kept "
+                   "are still dollars, so they are valued at **today's** rate and move with it.")
+        st.markdown("##### Vested")
         rc = st.columns(3, vertical_alignment="bottom")
-        r_units = rc[0].number_input("Quantity vested", min_value=0.0, step=1.0, format="%.4f", key="rsu_units")
-        r_price = rc[1].number_input("Buy price per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_price")
-        r_fx = rc[2].number_input("USD → ₹ (today's rate)", min_value=0.0, value=float(fx or 0.0), step=0.1,
-                                  format="%.4f", key="rsu_fx", disabled=bool(fx),
-                                  help="The live rate. Only editable when no live rate could be fetched.")
-        usd_total = r_units * r_price
-        inr_total = usd_total * r_fx
-        m = st.columns(3)
-        kpi(m[0], "Total in US$", f"${usd_total:,.2f}")
-        kpi(m[1], "Total in ₹", inr_total)
-        m[2].caption(f"{r_units:g} × ${r_price:,.2f} × ₹{r_fx:,.2f}")
-        sc = st.columns([1, 1.2, 1, 0.8], vertical_alignment="bottom")
-        r_date = dinput(sc[0], "Vest date", date.today(), key="rsu_date")
-        r_note = sc[1].text_input("Description", placeholder="e.g. Intel RSU, Q3 vest", key="rsu_note")
-        r_tax = sc[2].number_input("Taxes paid on it (₹)", min_value=0.0, step=1000.0, format="%.2f", key="rsu_tax",
-                                   help="Optional. Tax withheld on this vest, subtracted like any other tax.")
-        if sc[3].button("Add RSU vest", type="primary", width="stretch", key="rsu_add"):
-            if r_units <= 0 or r_price <= 0 or r_fx <= 0:
-                st.error("Enter a quantity and a buy price above zero (and a USD → ₹ rate, if none could be fetched).")
+        r_date = dinput(rc[0], "Vest date", date.today(), key="rsu_date")
+        r_units = rc[1].number_input("Shares vested", min_value=0.0, step=1.0, format="%.4f", key="rsu_units")
+        r_price = rc[2].number_input("Buy price per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_price")
+        st.markdown("##### Sold for tax")
+        sc = st.columns(4, vertical_alignment="bottom")
+        s_qty = sc[0].number_input("Shares sold for tax", min_value=0.0, max_value=float(max(r_units, 0.0)) or None,
+                                   step=1.0, format="%.4f", key="rsu_sold",
+                                   help="Cannot be more than the shares vested.")
+        s_price = sc[1].number_input("Sell price per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_sellpx")
+        s_date = dinput(sc[2], "Sell date", r_date, key=f"rsu_sdate_{r_date}")
+        hist = fetch_fx_on(s_date) if s_qty > 0 else None
+        s_fx_default = float(hist or fx or 0.0)
+        s_fx = sc[3].number_input("USD → ₹ on the sell date", min_value=0.0, value=s_fx_default, step=0.1, format="%.4f",
+                                  key=f"rsu_sfx_{s_date}_{round(s_fx_default, 4)}",
+                                  help="Fetched for that date. Change it if your broker used a different rate.")
+        if s_qty > 0 and not hist:
+            st.caption(":material/info: Couldn't fetch the rate for that date, so today's rate is filled in. "
+                       "Type the rate you used if you know it.")
+        tax_inr = s_qty * s_price * s_fx
+        held = r_units - s_qty
+        live = float(fx or 0.0)
+        gross_now = held * r_price * live + s_qty * r_price * s_fx
+        m = st.columns(4)
+        kpi(m[0], "Shares kept", f"{held:g}")
+        kpi(m[1], "Tax paid by selling (₹)", tax_inr,
+            help=f"{s_qty:g} × ${s_price:,.2f} × ₹{s_fx:,.2f}")
+        kpi(m[2], "Vest value now (₹)", gross_now,
+            help="Kept shares at today's rate + sold shares at the sell-date rate, all at the buy price.")
+        kpi(m[3], "Kept after tax now (₹)", held * r_price * live,
+            help=f"{held:g} × ${r_price:,.2f} × today's ₹{live:,.2f}")
+        ec = st.columns([1.4, 1.2, 0.8], vertical_alignment="bottom")
+        r_note = ec[0].text_input("Description", placeholder="e.g. Intel RSU, Q3 vest", key="rsu_note")
+        r_tax = ec[1].number_input("Any other tax (₹)", min_value=0.0, step=1000.0, format="%.2f", key="rsu_tax",
+                                   help="Optional: tax on this vest that was not paid by selling shares.")
+        if ec[2].button("Add RSU vest", type="primary", width="stretch", key="rsu_add"):
+            if r_units <= 0 or r_price <= 0:
+                st.error("Enter shares vested and a buy price, both above zero.")
+            elif s_qty > r_units:
+                st.error("Shares sold for tax cannot be more than the shares vested.")
+            elif s_qty > 0 and (s_price <= 0 or s_fx <= 0):
+                st.error("Shares were sold for tax, so enter their sell price and the USD → ₹ rate on the sell date.")
+            elif live <= 0 and s_qty < r_units:
+                st.error("No USD → ₹ rate is available yet, set one in the sidebar first.")
             else:
-                label = f"{r_note.strip() + ': ' if r_note.strip() else ''}{r_units:g} × ${r_price:,.2f}"
+                label = (f"{r_note.strip() + ': ' if r_note.strip() else ''}{r_units:g} vested × ${r_price:,.2f}"
+                         + (f", {s_qty:g} sold for tax" if s_qty > 0 else ""))
                 db.insert("income", {"date": r_date, "source": db.RSU_SOURCE, "description": label,
-                                     "amount": round(inr_total, 2), "rsu_qty": r_units, "rsu_buy_price": r_price,
-                                     "tax_paid": r_tax or None})
+                                     "amount": round(gross_now, 2), "rsu_qty": r_units, "rsu_buy_price": r_price,
+                                     "rsu_sold_qty": s_qty or None, "rsu_sell_price": s_price or None,
+                                     "rsu_sell_date": s_date if s_qty > 0 else None,
+                                     "rsu_sell_fx": s_fx if s_qty > 0 else None, "tax_paid": r_tax or None})
                 flash("RSU vest added.")
                 st.rerun()
         rt = an.rsu_table(income, fx)
         if not rt.empty:
-            st.markdown("**RSUs held in dollars**")
-            show_rt = pd.DataFrame({"Vest date": rt["date"], "Description": rt["description"],
-                                    "Quantity": rt["qty"].map(lambda v: f"{v:g}"),
-                                    "Buy price": rt["buy_price"].map(lambda v: f"${v:,.2f}"),
-                                    "US$": rt["usd"].map(lambda v: f"${v:,.2f}"),
-                                    "₹ when added": rt["inr_at_vest"].map(an.inr),
-                                    "₹ at today's rate": rt["inr_now"].map(an.inr),
-                                    "Exchange-rate effect": rt["fx_impact"].map(
-                                        lambda v: "–" if pd.isna(v) else ("+" if v >= 0 else "-") + an.inr(v))})
+            st.markdown("**Your RSU vests**")
+            fmt = lambda f: (lambda v: "–" if pd.isna(v) else f(v))
+            show_rt = pd.DataFrame({
+                "Vest date": rt["date"], "Description": rt["description"],
+                "Vested": rt["vested"].map(lambda v: f"{v:g}"), "Buy price": rt["buy_price"].map(lambda v: f"${v:,.2f}"),
+                "Sold for tax": rt["sold"].map(lambda v: f"{v:g}"),
+                "Sell price": rt["sell_price"].map(fmt(lambda v: f"${v:,.2f}" if v else "–")),
+                "Sell date": rt["sell_date"].map(lambda v: "–" if v is None or pd.isna(v) else str(v)),
+                "USD→₹ on sell date": rt["sell_fx"].map(fmt(lambda v: f"{v:,.2f}" if v else "–")),
+                "Tax (₹)": rt["tax_inr"].map(an.inr),
+                "Kept": rt["held"].map(lambda v: f"{v:g}"),
+                "Kept, worth now (₹)": rt["held_inr_now"].map(an.inr)})
             st.dataframe(show_rt, hide_index=True, width="stretch")
-            tot = rt["fx_impact"].sum(skipna=True)
-            st.caption(f"The Source totals use the “₹ at today's rate” column"
-                       + (f" (USD/INR {fx:,.2f})" if fx else " (no live rate yet, so the vest-day value is used)")
-                       + f". Exchange-rate effect so far: {'+' if tot >= 0 else '-'}{an.inr(tot)}.")
+            st.caption("The Source totals count each vest as: kept shares at today's rate + sold shares at the sell-date "
+                       "rate, less the tax from the sold shares." +
+                       (f" Today's rate: ₹{fx:,.2f}." if fx else " No live rate yet, so the amount saved when added is used."))
 
     st.markdown("**Edit entries**")
     f1, f2, f3 = st.columns(3)
@@ -541,10 +577,15 @@ with tabs[1]:
         "amount": st.column_config.NumberColumn("Amount (₹)", format="%.2f", required=True,
                                                 help="Negative for a loss, e.g. an FD closed early."),
         "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
-        "rsu_qty": st.column_config.NumberColumn("RSU quantity", min_value=0, format="%.4f",
-                                                  help="RSU Vested rows. With the buy price, the totals use quantity × "
-                                                       "buy price × today's USD→₹ rate instead of the Amount."),
+        "rsu_qty": st.column_config.NumberColumn("RSU shares vested", min_value=0, format="%.4f",
+                                                  help="RSU Vested rows. With the buy price, the totals use these instead "
+                                                       "of the Amount: kept shares at today's USD→₹ rate."),
         "rsu_buy_price": st.column_config.NumberColumn("RSU buy price (US$)", min_value=0, format="%.4f"),
+        "rsu_sold_qty": st.column_config.NumberColumn("RSU sold for tax", min_value=0, format="%.4f"),
+        "rsu_sell_price": st.column_config.NumberColumn("RSU sell price (US$)", min_value=0, format="%.4f"),
+        "rsu_sell_date": dcol("RSU sell date"),
+        "rsu_sell_fx": st.column_config.NumberColumn("USD→₹ on sell date", min_value=0, format="%.4f",
+                                                      help="Tax = sold × sell price × this rate, deducted as Taxes Paid."),
         "other_deductions": money_cfg("EPF / NPS / returned (₹)",
                                       help="Put in EPF/NPS or given back to you. Recorded only, not subtracted.")},
         ("date", "source", "amount"), "income")
