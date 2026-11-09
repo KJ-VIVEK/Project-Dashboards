@@ -164,9 +164,9 @@ def test_sync_table_add_update_delete(path):
     ed = orig.copy()
     ed = ed.iloc[1:].reset_index(drop=True)            # delete row 1
     ed.loc[0, "amount"] = 25.0                          # update row 2
-    ed.loc[len(ed)] = [None, date(2025, 2, 1), "Misc", "gift", 5.0]       # add
-    ed.loc[len(ed)] = [None, None, None, None, None]                      # blank: ignored
-    ed.loc[len(ed)] = [None, date(2025, 3, 1), "Salary", None, None]      # no amount: skipped
+    ed.loc[len(ed)] = [None, date(2025, 2, 1), "Misc", "gift", 5.0, None, None]       # add
+    ed.loc[len(ed)] = [None, None, None, None, None, None, None]                      # blank: ignored
+    ed.loc[len(ed)] = [None, date(2025, 3, 1), "Salary", None, None, None, None]      # no amount: skipped
     stats = db.sync_table("income", orig, ed, required=("date", "source", "amount"), path=path)
     assert stats == {"added": 1, "updated": 1, "deleted": 1, "skipped": 1}
     now = db.get_table("income", path)
@@ -672,3 +672,15 @@ def test_other_deductions_are_subtracted_like_taxes():
     assert an.income_pivot(df, 2025).loc["Other Deductions", 1] == -40
     assert not val.validate("income", pd.DataFrame({"id": [1], "date": [date(2025, 1, 31)], "source": ["Other Deductions"],
                                                     "amount": [40.0]}))
+
+
+def test_deductions_on_the_inflow_row_are_subtracted_on_its_date():
+    inc = pd.DataFrame({"date": [date(2025, 3, 31)], "source": ["Salary"], "amount": [1000.0],
+                        "tax_paid": [100.0], "other_deductions": [None]})
+    none = pd.DataFrame({"date": [], "amount": []})
+    df = an.income_frame(inc, none, pd.DataFrame({"date": [], "pnl": []}))
+    assert df["amount"].sum() == 900
+    p = an.income_pivot(df, 2025)
+    assert p.loc["Salary", 3] == 1000 and p.loc["Taxes Paid", 3] == -100
+    assert val.validate("income", pd.DataFrame({"id": [1], "date": [date(2025, 3, 31)], "source": ["Salary"],
+                                                "amount": [1000.0], "tax_paid": [-5.0]}))

@@ -129,6 +129,13 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
     amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes and other deductions reduce the total
     parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
                            "origin": "Source sheet"})]
+    # deductions entered on an inflow's own row (taxes paid, other deductions) become negative rows on its date
+    for col, src in (("tax_paid", db.TAX_SOURCE), ("other_deductions", db.OTHER_DEDUCTION_SOURCE)):
+        if col in income:
+            ded = num(income[col])
+            keep = ded.abs() > 0
+            parts.append(pd.DataFrame({"date": income["date"][keep], "source": src, "amount": -ded[keep].abs(),
+                                       "origin": "Source sheet"}))
     if include_auto:
         parts.append(pd.DataFrame({"date": dividends["date"], "source": "Dividend/FD",
                                    "amount": num(dividends["amount"]), "origin": "Stocks (dividend)"}))
