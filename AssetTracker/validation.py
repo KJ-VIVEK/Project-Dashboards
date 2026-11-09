@@ -26,7 +26,7 @@ LABELS = {
     "gst": "GST", "cost": "Cost", "area_sqft": "Area", "registration": "Registration", "brokerage": "Brokerage",
     "monthly_rent": "Rent per month", "current_per_sqft": "Current price per sq ft", "purchase_date": "Purchased on",
     "maturity_date": "Maturity date", "target": "Goal target", "title": "Title", "description": "Description",
-    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "Other deductions",
+    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF / NPS / returned",
 }
 
 # column -> rule for each table. Rules: (">", 0) must be above 0, (">=", 0) not negative, ("between", lo, hi),
@@ -133,8 +133,8 @@ def validate(table: str, df: pd.DataFrame, required=()) -> list[str]:
             if n == 0:
                 bad("Amount cannot be zero.")
             elif n is not None and n < 0 and row.get("source") in db.DEDUCTION_SOURCES:
-                bad("A Taxes Paid / Other Deductions row is entered as a positive amount (it is subtracted for you). "
-                    "Use the Taxes paid column on the inflow, or a negative amount under another source for a loss.")
+                bad("A Taxes Paid row is entered as a positive amount (it is subtracted for you). "
+                    "Use a negative amount under another source for a loss.")
         if table == "loans" and not _blank(row.get("installments_paid")):
             n = _num(row["installments_paid"])
             if n is not None and n != int(n):
