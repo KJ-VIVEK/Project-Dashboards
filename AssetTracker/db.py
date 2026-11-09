@@ -48,7 +48,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL, source TEXT NOT NULL, description TEXT, amount REAL NOT NULL,
-    tax_paid REAL, other_deductions REAL, usd_amount REAL);
+    tax_paid REAL, other_deductions REAL, usd_amount REAL,
+    rsu_qty REAL, rsu_buy_price REAL);
 CREATE TABLE IF NOT EXISTS securities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE, symbol TEXT, category TEXT NOT NULL, reason TEXT,
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 # table -> (persisted columns excluding id, columns holding dates, columns holding 0/1 flags)
 TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
-    "income": (["date", "source", "description", "amount", "tax_paid", "other_deductions", "usd_amount"], {"date"}, set()),
+    "income": (["date", "source", "description", "amount", "tax_paid", "other_deductions", "rsu_qty", "rsu_buy_price"], {"date"}, set()),
     "securities": (["name", "symbol", "category", "reason", "current_price", "price_date", "currency"],
                    {"price_date"}, set()),
     "trades": (["security_id", "date", "side", "qty", "price", "fees", "note", "fx_rate"], {"date"}, set()),
@@ -149,7 +150,8 @@ _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_
                ("insurance", "start_date", "TEXT"), ("insurance", "end_date", "TEXT"),
                ("insurance", "insured_for", "TEXT"),
                ("income", "tax_paid", "REAL"), ("income", "other_deductions", "REAL"),
-               ("income", "usd_amount", "REAL")]
+               ("income", "usd_amount", "REAL"),
+               ("income", "rsu_qty", "REAL"), ("income", "rsu_buy_price", "REAL")]
 
 
 def init_db(path: str | None = None) -> None:

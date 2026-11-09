@@ -126,8 +126,8 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
     (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
-    if usd_inr and "usd_amount" in income:     # RSUs that have not been sold follow today's USD->INR rate
-        usd = num(income["usd_amount"])
+    if usd_inr and "rsu_qty" in income:     # RSUs that have not been sold: qty x buy price x today's USD->INR rate
+        usd = num(income["rsu_qty"]) * num(income["rsu_buy_price"])
         live = (income["source"] == db.RSU_SOURCE) & (usd > 0)
         amount = amount.where(~live, usd * usd_inr)
     amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes reduce the total
@@ -648,14 +648,16 @@ def growth_line(net: pd.Series, avg_pct: float | None) -> pd.Series:
 
 
 def rsu_table(income: pd.DataFrame, usd_inr: float | None) -> pd.DataFrame:
-    """RSU vests that are still held in dollars: US$ value, rupees at the vest-day rate, rupees at today's rate and the
-    difference the exchange rate made. Rows without a US$ value are left out."""
-    if "usd_amount" not in income:
-        return pd.DataFrame(columns=["date", "description", "usd", "inr_at_vest", "inr_now", "fx_impact"])
-    r = income[(income["source"] == db.RSU_SOURCE) & (num(income["usd_amount"]) > 0)]
-    usd = num(r["usd_amount"])
-    out = pd.DataFrame({"date": r["date"], "description": r["description"], "usd": usd,
-                        "inr_at_vest": num(r["amount"])})
+    """RSU vests that are still held: quantity, buy price, US$ value (qty x buy price), rupees when the entry was made,
+    rupees at today's rate and the difference the exchange rate made. Rows without qty and buy price are left out."""
+    cols = ["date", "description", "qty", "buy_price", "usd", "inr_at_vest", "inr_now", "fx_impact"]
+    if "rsu_qty" not in income:
+        return pd.DataFrame(columns=cols)
+    usd_all = num(income["rsu_qty"]) * num(income["rsu_buy_price"])
+    r = income[(income["source"] == db.RSU_SOURCE) & (usd_all > 0)]
+    usd = usd_all[r.index]
+    out = pd.DataFrame({"date": r["date"], "description": r["description"], "qty": num(r["rsu_qty"]),
+                        "buy_price": num(r["rsu_buy_price"]), "usd": usd, "inr_at_vest": num(r["amount"])})
     out["inr_now"] = usd * usd_inr if usd_inr else float("nan")
     out["fx_impact"] = out["inr_now"] - out["inr_at_vest"]
     return out

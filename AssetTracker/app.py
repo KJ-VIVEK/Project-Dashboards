@@ -456,37 +456,34 @@ with tabs[1]:
             st.caption(f"Average year-on-year growth: **{avg:+.1f}%** (the mean of the yearly changes). The dashed line is "
                        "where income would be if it had grown by exactly that each year from the first year.")
 
-    with st.expander("RSUs vested and USD → ₹ calculator", icon=":material/currency_exchange:"):
-        st.caption("Enter the RSUs that vested at their **buy value** (the share price on the vest day). They have not "
-                   "been sold, so they are still dollars: the US$ value is saved, and in the Source totals it is valued at "
-                   "**today's USD → ₹ rate**, so the exchange rate moves it. The vest-day rupee value is kept for "
-                   "reference. Leave units at 0 to use this as a plain USD → ₹ calculator.")
-        rc = st.columns(4, vertical_alignment="bottom")
-        r_units = rc[0].number_input("Units vested", min_value=0.0, step=1.0, format="%.4f", key="rsu_units")
-        r_price = rc[1].number_input("Buy value per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_price")
-        r_fx = rc[2].number_input("USD → ₹ rate on the vest day", min_value=0.0, value=float(fx or 0.0), step=0.1,
-                                  format="%.4f", key="rsu_fx",
-                                  help="Defaults to today's rate. Use the rate on the vest day if you know it. It is "
-                                       "kept as the record of what the vest was worth in ₹ that day.")
-        r_usd = rc[3].number_input("Or a US$ amount", min_value=0.0, step=100.0, format="%.2f", key="rsu_usd",
-                                   help="Used when units are 0: converts this dollar amount at the rate.")
-        rsu = an.rsu_value(r_units, r_price, r_fx) if r_units > 0 else {"usd": r_usd, "inr": r_usd * r_fx}
+    with st.expander("RSUs vested", icon=":material/currency_exchange:"):
+        st.caption("Enter the **quantity** that vested and the **buy price** per share in US$. They have not been sold, "
+                   "so the total is **quantity × buy price × today's USD → ₹ rate**, and it moves with the rate. "
+                   "Taxes paid on the vest (if any) are subtracted like any other tax.")
+        rc = st.columns(3, vertical_alignment="bottom")
+        r_units = rc[0].number_input("Quantity vested", min_value=0.0, step=1.0, format="%.4f", key="rsu_units")
+        r_price = rc[1].number_input("Buy price per share (US$)", min_value=0.0, step=1.0, format="%.4f", key="rsu_price")
+        r_fx = rc[2].number_input("USD → ₹ (today's rate)", min_value=0.0, value=float(fx or 0.0), step=0.1,
+                                  format="%.4f", key="rsu_fx", disabled=bool(fx),
+                                  help="The live rate. Only editable when no live rate could be fetched.")
+        usd_total = r_units * r_price
+        inr_total = usd_total * r_fx
         m = st.columns(3)
-        kpi(m[0], "Value in US$", f"${rsu['usd']:,.2f}")
-        kpi(m[1], "Value in ₹", rsu["inr"])
-        m[2].caption(f"{r_units:g} × ${r_price:,.2f} × ₹{r_fx:,.2f}" if r_units > 0 else f"${r_usd:,.2f} × ₹{r_fx:,.2f}")
+        kpi(m[0], "Total in US$", f"${usd_total:,.2f}")
+        kpi(m[1], "Total in ₹", inr_total)
+        m[2].caption(f"{r_units:g} × ${r_price:,.2f} × ₹{r_fx:,.2f}")
         sc = st.columns([1, 1.2, 1, 0.8], vertical_alignment="bottom")
         r_date = dinput(sc[0], "Vest date", date.today(), key="rsu_date")
         r_note = sc[1].text_input("Description", placeholder="e.g. Intel RSU, Q3 vest", key="rsu_note")
         r_tax = sc[2].number_input("Taxes paid on it (₹)", min_value=0.0, step=1000.0, format="%.2f", key="rsu_tax",
                                    help="Optional. Tax withheld on this vest, subtracted like any other tax.")
-        if sc[3].button("Add as RSU Vested", type="primary", width="stretch", key="rsu_add"):
+        if sc[3].button("Add RSU vest", type="primary", width="stretch", key="rsu_add"):
             if r_units <= 0 or r_price <= 0 or r_fx <= 0:
-                st.error("Enter units, a buy value per share and a USD → ₹ rate, all above zero.")
+                st.error("Enter a quantity and a buy price above zero (and a USD → ₹ rate, if none could be fetched).")
             else:
-                label = f"{r_note.strip() + ': ' if r_note.strip() else ''}{r_units:g} units × ${r_price:,.2f} × ₹{r_fx:,.2f}"
+                label = f"{r_note.strip() + ': ' if r_note.strip() else ''}{r_units:g} × ${r_price:,.2f}"
                 db.insert("income", {"date": r_date, "source": db.RSU_SOURCE, "description": label,
-                                     "amount": round(rsu["inr"], 2), "usd_amount": round(rsu["usd"], 4),
+                                     "amount": round(inr_total, 2), "rsu_qty": r_units, "rsu_buy_price": r_price,
                                      "tax_paid": r_tax or None})
                 flash("RSU vest added.")
                 st.rerun()
@@ -494,8 +491,10 @@ with tabs[1]:
         if not rt.empty:
             st.markdown("**RSUs held in dollars**")
             show_rt = pd.DataFrame({"Vest date": rt["date"], "Description": rt["description"],
+                                    "Quantity": rt["qty"].map(lambda v: f"{v:g}"),
+                                    "Buy price": rt["buy_price"].map(lambda v: f"${v:,.2f}"),
                                     "US$": rt["usd"].map(lambda v: f"${v:,.2f}"),
-                                    "₹ on the vest day": rt["inr_at_vest"].map(an.inr),
+                                    "₹ when added": rt["inr_at_vest"].map(an.inr),
                                     "₹ at today's rate": rt["inr_now"].map(an.inr),
                                     "Exchange-rate effect": rt["fx_impact"].map(
                                         lambda v: "–" if pd.isna(v) else ("+" if v >= 0 else "-") + an.inr(v))})
@@ -527,9 +526,10 @@ with tabs[1]:
         "amount": st.column_config.NumberColumn("Amount (₹)", format="%.2f", required=True,
                                                 help="Negative for a loss, e.g. an FD closed early."),
         "tax_paid": money_cfg("Taxes paid (₹)", help="Deducted from this inflow."),
-        "usd_amount": st.column_config.NumberColumn("RSU US$ value", min_value=0, format="%.2f",
-                                                     help="RSU Vested rows only. When filled, the totals use this × today's "
-                                                          "USD→₹ rate instead of the Amount."),
+        "rsu_qty": st.column_config.NumberColumn("RSU quantity", min_value=0, format="%.4f",
+                                                  help="RSU Vested rows. With the buy price, the totals use quantity × "
+                                                       "buy price × today's USD→₹ rate instead of the Amount."),
+        "rsu_buy_price": st.column_config.NumberColumn("RSU buy price (US$)", min_value=0, format="%.4f"),
         "other_deductions": money_cfg("EPF / NPS / returned (₹)",
                                       help="Put in EPF/NPS or given back to you. Recorded only, not subtracted.")},
         ("date", "source", "amount"), "income")
