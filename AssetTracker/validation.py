@@ -26,7 +26,7 @@ LABELS = {
     "gst": "GST", "cost": "Cost", "area_sqft": "Area", "registration": "Registration", "brokerage": "Brokerage",
     "monthly_rent": "Rent per month", "current_per_sqft": "Current price per sq ft", "purchase_date": "Purchased on",
     "maturity_date": "Maturity date", "target": "Goal target", "title": "Title", "description": "Description",
-    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF / NPS / returned", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
+    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF or NPS or Vouchers or Insurance", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
     "rsu_sell_price": "Sell price", "rsu_sell_date": "Sell date", "rsu_sell_fx": "USD to INR on the sell date",
 }
 

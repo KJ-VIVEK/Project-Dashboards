@@ -122,7 +122,7 @@ def build_positions(securities: pd.DataFrame, trades: pd.DataFrame, dividends: p
 
 # ---------------------------------------------------------------- income
 def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.DataFrame, include_auto=True,
-                 premiums: pd.DataFrame | None = None, usd_inr: float | None = None) -> pd.DataFrame:
+                 premiums: pd.DataFrame | None = None, usd_inr: float | None = None, extra_tax_pct: float = 0.0) -> pd.DataFrame:
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
     (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
@@ -169,6 +169,12 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
                                    "amount": -num(premiums["amount"]).abs(), "origin": "Insurance"}))
     df = pd.concat([p for p in parts if len(p)], ignore_index=True) if any(len(p) for p in parts) else \
         pd.DataFrame(columns=["date", "source", "amount", "origin"])
+    if extra_tax_pct:   # extra tax: a % of the Dividend/FD + PL Booking + Miscellaneous total, subtracted as its own line
+        base = df[df["source"].isin(db.EXTRA_TAX_BASE)]
+        if len(base):
+            df = pd.concat([df, pd.DataFrame({"date": base["date"], "source": db.EXTRA_TAX_SOURCE,
+                                              "amount": -base["amount"] * extra_tax_pct / 100,
+                                              "origin": "Extra tax"})], ignore_index=True)
     dt = pd.to_datetime(df["date"], errors="coerce")
     df["year"] = dt.dt.year
     df["month"] = dt.dt.month
@@ -177,7 +183,7 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
 
 def income_pivot(df: pd.DataFrame, year: int | None, by="month") -> pd.DataFrame:
     """Rows = income source, columns = month 1..12 (by='month', for `year`) or years (by='year')."""
-    sources = db.INCOME_SOURCES + sorted(set(df["source"]) - set(db.INCOME_SOURCES))
+    sources = db.INCOME_SOURCES + [db.EXTRA_TAX_SOURCE] + sorted(set(df["source"]) - set(db.INCOME_SOURCES) - {db.EXTRA_TAX_SOURCE})
     if by == "month":
         d = df[df["year"] == year]
         p = d.pivot_table(index="source", columns="month", values="amount", aggfunc="sum", fill_value=0.0)
@@ -695,8 +701,8 @@ def inflow_by_year(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["year", "gross", "tax", "net", "yoy_pct", "gross_yoy_pct", "tax_yoy_pct"])
     g = df.groupby("year").apply(lambda d: pd.Series({
-        "gross": d.loc[d["source"] != db.TAX_SOURCE, "amount"].sum(),
-        "tax": -d.loc[d["source"] == db.TAX_SOURCE, "amount"].sum()}), include_groups=False)
+        "gross": d.loc[~d["source"].isin([db.TAX_SOURCE, db.EXTRA_TAX_SOURCE]), "amount"].sum(),
+        "tax": -d.loc[d["source"].isin([db.TAX_SOURCE, db.EXTRA_TAX_SOURCE]), "amount"].sum()}), include_groups=False)
     g["net"] = g["gross"] - g["tax"]
     g = g.reindex(range(int(g.index.min()), int(g.index.max()) + 1), fill_value=0.0)
     for col, name in (("net", "yoy_pct"), ("gross", "gross_yoy_pct"), ("tax", "tax_yoy_pct")):

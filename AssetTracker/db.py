@@ -20,6 +20,8 @@ PREMIUM_SOURCE = "Insurance Premium"  # derived from the Insurance tab, subtract
 # Money taken from an inflow but not lost (EPF, NPS, amounts returned to you) is stored in income.other_deductions as
 # information only: it is NOT subtracted from income. Only taxes are.
 DEDUCTION_SOURCES = [TAX_SOURCE]
+EXTRA_TAX_SOURCE = "Extra tax to be paid"   # derived: a % of the Dividend/FD, PL Booking and Miscellaneous inflows
+EXTRA_TAX_BASE = ["Dividend/FD", "PL Booking", "Miscellaneous"]
 RSU_SOURCE = "RSU Vested"   # RSUs that vested, at their buy (vest-day) value
 INCOME_SOURCES = ["Salary", RSU_SOURCE, "Dividend/FD", "PL Booking", "Miscellaneous", TAX_SOURCE]
 SECURITY_CATEGORIES = [
