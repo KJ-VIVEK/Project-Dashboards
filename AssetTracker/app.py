@@ -534,22 +534,16 @@ with tabs[3]:
                 hint="Edit cells, or tick a row's left edge and press Delete; then Save changes.")
 
     if not ins_y.empty:
-        g = ins_y.assign(paid=ins_y["paid_to_date"].fillna(0.0)).sort_values("paid")
-        colors = {"Active": "#1baf7a", "Inactive": "#898781", "Not started": "#eda100"}
-        fig = go.Figure()
-        for stt, color in colors.items():
-            d = g[g["status"] == stt]
-            if d.empty:
-                continue
-            cover = an.num(d["sum_assured"])
-            fig.add_bar(y=d["name"], x=d["paid"], name=stt, orientation="h", marker_color=color,
-                        text=[f"{an.inr(a)} paid · cover {an.inr(b)}" for a, b in zip(d["paid"], cover)],
-                        textposition="outside", cliponaxis=False,
-                        hovertemplate="%{y}: %{text}<extra>" + stt + "</extra>")
-        fig.update_xaxes(tickprefix="₹", tickformat="~s", range=[0, max(g["paid"].max(), 1) * 1.7])
-        show(style(fig, "Premium paid to date and cover, by policy", height=120 + 60 * len(g)))
-        st.caption("Bar = premium paid since the policy started; the label also shows the amount insured. "
-                   "Colour = whether the policy is active now.")
+        dots = {"Active": "🟢 Active", "Inactive": "⚪ Inactive", "Not started": "🟡 Not started"}
+        order = {"Active": 0, "Not started": 1, "Inactive": 2}
+        g = ins_y.assign(_o=ins_y["status"].map(order)).sort_values(["_o", "name"])
+        t = pd.DataFrame({"Policy": g["name"], "Status": g["status"].map(dots),
+                          "Premium paid": g["paid_to_date"].map(lambda v: "–" if pd.isna(v) else an.inr(v)),
+                          "Insurance amount": an.num(g["sum_assured"]).map(an.inr)})
+        st.markdown("##### Policies")
+        st.dataframe(t, hide_index=True, width="stretch")
+        st.caption("Premium paid is the total since the policy started, with premium changes applied. "
+                   "Active means the policy is running today.")
         nodate = ins_y[ins_y["paid_to_date"].isna()]["name"].tolist()
         if nodate:
             st.info("No start date, so no premium history: " + ", ".join(nodate) +
