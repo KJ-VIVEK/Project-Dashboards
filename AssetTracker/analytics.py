@@ -126,15 +126,34 @@ def income_frame(income: pd.DataFrame, dividends: pd.DataFrame, realised: pd.Dat
     """Unified income ledger: manual rows plus (optionally) stock dividends and realised P/L from the Stocks tab, and
     (optionally) the insurance premiums paid, negated."""
     amount = num(income["amount"])
-    if usd_inr and "rsu_qty" in income:     # RSUs that have not been sold: qty x buy price x today's USD->INR rate
-        usd = num(income["rsu_qty"]) * num(income["rsu_buy_price"])
-        live = (income["source"] == db.RSU_SOURCE) & (usd > 0)
-        amount = amount.where(~live, usd * usd_inr)
+    rsu_tax = None
+    if "rsu_qty" in income:
+        # RSUs: the shares sold for tax were turned into rupees on the sell date (fixed); the shares still held are
+        # dollars, valued at today's USD->INR rate. Tax = shares sold x sell price x the sell-date rate.
+        vested, buy = num(income["rsu_qty"]), num(income["rsu_buy_price"])
+        sold = num(income["rsu_sold_qty"]) if "rsu_sold_qty" in income else vested * 0
+        sold = pd.concat([sold, vested], axis=1).min(axis=1)          # cannot sell more than vested
+        sell_px = num(income["rsu_sell_price"]) if "rsu_sell_price" in income else vested * 0
+        sell_fx = num(income["rsu_sell_fx"]) if "rsu_sell_fx" in income else vested * 0
+        sell_fx = sell_fx.where(sell_fx > 0, usd_inr or 0.0)          # no sell-date rate: use today's
+        is_rsu = (income["source"] == db.RSU_SOURCE) & (vested > 0) & (buy > 0)
+        if usd_inr:
+            gross = (vested - sold) * buy * usd_inr + sold * buy * sell_fx
+            amount = amount.where(~is_rsu, gross)
+        tax_inr = (sold * sell_px * sell_fx).where(is_rsu, 0.0)
+        sell_dt = pd.to_datetime(income["rsu_sell_date"], errors="coerce") if "rsu_sell_date" in income else None
+        rsu_tax = pd.DataFrame({"date": income["date"] if sell_dt is None else
+                                [s.date() if pd.notna(s) else d for s, d in zip(sell_dt, income["date"])],
+                                "tax": tax_inr})
+        rsu_tax = rsu_tax[rsu_tax["tax"] > 0]
     amount = amount.where(~income["source"].isin(db.DEDUCTION_SOURCES), -amount.abs())  # taxes reduce the total
     parts = [pd.DataFrame({"date": income["date"], "source": income["source"], "amount": amount,
                            "origin": "Source sheet"})]
     # taxes entered on an inflow's own row become a negative Taxes Paid row on its date. The "put in EPF/NPS or
     # returned" column (other_deductions) is information only and never subtracted.
+    if rsu_tax is not None and len(rsu_tax):   # tax paid by selling shares at vest, on the sell date
+        parts.append(pd.DataFrame({"date": rsu_tax["date"], "source": db.TAX_SOURCE, "amount": -rsu_tax["tax"],
+                                   "origin": "Source sheet (RSU shares sold for tax)"}))
     if "tax_paid" in income:
         ded = num(income["tax_paid"])
         keep = ded.abs() > 0
@@ -648,18 +667,24 @@ def growth_line(net: pd.Series, avg_pct: float | None) -> pd.Series:
 
 
 def rsu_table(income: pd.DataFrame, usd_inr: float | None) -> pd.DataFrame:
-    """RSU vests that are still held: quantity, buy price, US$ value (qty x buy price), rupees when the entry was made,
-    rupees at today's rate and the difference the exchange rate made. Rows without qty and buy price are left out."""
-    cols = ["date", "description", "qty", "buy_price", "usd", "inr_at_vest", "inr_now", "fx_impact"]
+    """One row per RSU vest: shares vested, buy price, shares sold for tax (price, date, rate), tax in rupees, shares
+    still held, and what the held shares are worth at today's rate (vs their buy value at the sell-date/vest rate)."""
+    cols = ["date", "description", "vested", "buy_price", "sold", "sell_price", "sell_date", "sell_fx", "tax_inr",
+            "held", "held_usd", "held_inr_now"]
     if "rsu_qty" not in income:
         return pd.DataFrame(columns=cols)
-    usd_all = num(income["rsu_qty"]) * num(income["rsu_buy_price"])
-    r = income[(income["source"] == db.RSU_SOURCE) & (usd_all > 0)]
-    usd = usd_all[r.index]
-    out = pd.DataFrame({"date": r["date"], "description": r["description"], "qty": num(r["rsu_qty"]),
-                        "buy_price": num(r["rsu_buy_price"]), "usd": usd, "inr_at_vest": num(r["amount"])})
-    out["inr_now"] = usd * usd_inr if usd_inr else float("nan")
-    out["fx_impact"] = out["inr_now"] - out["inr_at_vest"]
+    vested, buy = num(income["rsu_qty"]), num(income["rsu_buy_price"])
+    r = income[(income["source"] == db.RSU_SOURCE) & (vested > 0) & (buy > 0)]
+    v, b = vested[r.index], buy[r.index]
+    sold = num(r["rsu_sold_qty"]) if "rsu_sold_qty" in r else v * 0
+    sold = pd.concat([sold, v], axis=1).min(axis=1)
+    px = num(r["rsu_sell_price"]) if "rsu_sell_price" in r else v * 0
+    fx = num(r["rsu_sell_fx"]) if "rsu_sell_fx" in r else v * 0
+    fx = fx.where(fx > 0, usd_inr or 0.0)
+    out = pd.DataFrame({"date": r["date"], "description": r["description"], "vested": v, "buy_price": b, "sold": sold,
+                        "sell_price": px, "sell_date": r["rsu_sell_date"] if "rsu_sell_date" in r else None,
+                        "sell_fx": fx, "tax_inr": sold * px * fx, "held": v - sold, "held_usd": (v - sold) * b})
+    out["held_inr_now"] = out["held_usd"] * usd_inr if usd_inr else float("nan")
     return out
 
 

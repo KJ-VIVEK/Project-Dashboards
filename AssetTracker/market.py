@@ -14,7 +14,7 @@ import os
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 
 import db
 
@@ -80,6 +80,37 @@ def fetch_usd_inr() -> float | None:
     try:  # fallback source
         rate = float(_get_json("https://open.er-api.com/v6/latest/USD")["rates"]["INR"])
         return rate if rate > 0 else None
+    except Exception:
+        return None
+
+
+def parse_fx_history(payload, day) -> float | None:
+    """Closing USD->INR on `day`, or the last close before it (weekends, holidays). None if nothing usable."""
+    try:
+        res = payload["chart"]["result"][0]
+        stamps, closes = res["timestamp"], res["indicators"]["quote"][0]["close"]
+        best = None
+        for t, c in zip(stamps, closes):
+            if c is None or c <= 0:
+                continue
+            if datetime.fromtimestamp(t, timezone.utc).date() <= day:
+                best = float(c)
+        return best
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def fx_on(day) -> float | None:
+    """USD->INR on a past date (Yahoo daily history); None when offline or the lookup fails."""
+    if offline():
+        return None
+    from datetime import datetime as _dt, time, timedelta
+    start = _dt.combine(day - timedelta(days=7), time(), tzinfo=timezone.utc)
+    end = _dt.combine(day + timedelta(days=2), time(), tzinfo=timezone.utc)
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/USDINR=X?interval=1d"
+           f"&period1={int(start.timestamp())}&period2={int(end.timestamp())}")
+    try:
+        return parse_fx_history(_get_json(url), day)
     except Exception:
         return None
 

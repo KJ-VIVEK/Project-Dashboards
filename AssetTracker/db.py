@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL, source TEXT NOT NULL, description TEXT, amount REAL NOT NULL,
     tax_paid REAL, other_deductions REAL, usd_amount REAL,
-    rsu_qty REAL, rsu_buy_price REAL);
+    rsu_qty REAL, rsu_buy_price REAL,
+    rsu_sold_qty REAL, rsu_sell_price REAL, rsu_sell_date TEXT, rsu_sell_fx REAL);
 CREATE TABLE IF NOT EXISTS securities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE, symbol TEXT, category TEXT NOT NULL, reason TEXT,
@@ -101,7 +102,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 # table -> (persisted columns excluding id, columns holding dates, columns holding 0/1 flags)
 TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
-    "income": (["date", "source", "description", "amount", "tax_paid", "other_deductions", "rsu_qty", "rsu_buy_price"], {"date"}, set()),
+    "income": (["date", "source", "description", "amount", "tax_paid", "other_deductions", "rsu_qty", "rsu_buy_price", "rsu_sold_qty", "rsu_sell_price", "rsu_sell_date",
+               "rsu_sell_fx"], {"date", "rsu_sell_date"}, set()),
     "securities": (["name", "symbol", "category", "reason", "current_price", "price_date", "currency"],
                    {"price_date"}, set()),
     "trades": (["security_id", "date", "side", "qty", "price", "fees", "note", "fx_rate"], {"date"}, set()),
@@ -151,7 +153,9 @@ _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_
                ("insurance", "insured_for", "TEXT"),
                ("income", "tax_paid", "REAL"), ("income", "other_deductions", "REAL"),
                ("income", "usd_amount", "REAL"),
-               ("income", "rsu_qty", "REAL"), ("income", "rsu_buy_price", "REAL")]
+               ("income", "rsu_qty", "REAL"), ("income", "rsu_buy_price", "REAL"),
+               ("income", "rsu_sold_qty", "REAL"), ("income", "rsu_sell_price", "REAL"),
+               ("income", "rsu_sell_date", "TEXT"), ("income", "rsu_sell_fx", "REAL")]
 
 
 def init_db(path: str | None = None) -> None:
