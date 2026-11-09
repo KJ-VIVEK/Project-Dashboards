@@ -434,3 +434,9 @@ def test_unrecorded_repayment_figures_stay_unknown_not_zero():
     assert pd.isna(r["emi_principal"]) and pd.isna(r["total_paid"]) and pd.isna(r["closing_gap"])
     assert r["balance_cleared"] == pytest.approx(r["balance_est"]) and r["balance_cleared"] > 200000
     assert r["interest_paid"] == pytest.approx(r["interest_est"]) and r["other_charges"] == 0
+
+
+def test_paid_to_lender_minus_loan_is_interest_plus_charges():
+    r = an.loans_frame(pd.DataFrame([KTM])).iloc[0]
+    assert r["lender_paid"] == 313222 and r["lender_extra"] == 40222
+    assert r["lender_extra"] == r["interest_paid"] + r["other_charges"]
