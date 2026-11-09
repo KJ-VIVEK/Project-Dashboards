@@ -699,3 +699,91 @@ def test_init_db_survives_a_column_added_by_another_session(path):
     db.init_db(path)            # and a repeat run is harmless
     db._MIGRATIONS = real
     assert "other_deductions" in db.get_table("income", path).columns
+
+
+# ---- Source sheet totals: every figure checked against a plain hand sum ------------------------------------
+def _source_total_row(df, year=None, by="month"):
+    """The Source tab's table exactly as app.py builds it: the pivot plus a Total column and a Total row."""
+    pv = an.income_pivot(df, year, by=by)
+    pv["Total"] = pv.sum(axis=1)
+    pv.loc["Total"] = pv.sum()
+    return pv
+
+
+def _empty_auto():
+    return pd.DataFrame({"date": [], "amount": []}), pd.DataFrame({"date": [], "pnl": []})
+
+
+def _src(rows):
+    cols = ["date", "source", "description", "amount", "tax_paid", "other_deductions"]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def test_source_totals_match_a_hand_sum():
+    inc = _src([
+        [date(2025, 1, 28), "Salary", "A", 100000.0, 10000.0, 5000.0],     # net 85,000
+        [date(2025, 2, 28), "Salary", "A", 100000.0, 10000.0, None],       # net 90,000
+        [date(2025, 2, 10), "Miscellaneous", "bonus", 20000.0, None, 0.0],  # net 20,000
+        [date(2026, 1, 28), "Salary", "A", 50000.0, 2500.0, 500.0],        # net 47,000
+    ])
+    d, r = _empty_auto()
+    df = an.income_frame(inc, d, r)
+    m25 = _source_total_row(df, 2025)
+    assert m25.loc["Salary", "Total"] == 200000                    # gross salary
+    assert m25.loc["Taxes Paid", "Total"] == -20000
+    assert m25.loc["Other Deductions", "Total"] == -5000
+    assert m25.loc["Total", 1] == 85000 and m25.loc["Total", 2] == 110000     # Jan, Feb net
+    assert m25.loc["Total", "Total"] == 85000 + 90000 + 20000 == 195000
+    y = _source_total_row(df, None, by="year")
+    assert y.loc["Total", 2025] == 195000 and y.loc["Total", 2026] == 47000
+    assert y.loc["Total", "Total"] == 242000                       # the sum of all years
+    assert y.loc["Total", "Total"] == m25.loc["Total", "Total"] + 47000
+
+
+def test_source_row_and_column_totals_agree():
+    inc = _src([[date(2024, 3, 1), "Salary", "x", 1000.0, 100.0, 50.0], [date(2024, 7, 1), "PL Booking", "t", -300.0, None, None]])
+    d, r = _empty_auto()
+    pv = _source_total_row(an.income_frame(inc, d, r), 2024)
+    body = pv.drop(index="Total", columns="Total")
+    assert pv.loc["Total", "Total"] == body.to_numpy().sum() == 1000 - 100 - 50 - 300
+    assert (pv["Total"].drop("Total") == body.sum(axis=1)).all()
+    assert (pv.loc["Total"].drop("Total") == body.sum(axis=0)).all()
+
+
+def test_source_deduction_edge_cases():
+    inc = _src([
+        [date(2025, 5, 1), "Salary", "s", 1000.0, -100.0, None],            # a deduction typed negative still subtracts once
+        [date(2025, 5, 2), "Salary", "s", 1000.0, float("nan"), float("nan")],   # blank deductions add nothing
+        [date(2025, 5, 3), "Taxes Paid", "old style row", 70.0, None, None],     # a legacy separate row still subtracts
+        [date(2025, 5, 4), "Other Deductions", "old style row", -30.0, None, None],
+    ])
+    d, r = _empty_auto()
+    df = an.income_frame(inc, d, r)
+    assert df["amount"].sum() == 1000 - 100 + 1000 - 70 - 30 == 1800
+    assert not df["amount"].isna().any()
+
+
+def test_source_total_includes_stocks_dividends_and_sale_profit_but_never_premiums():
+    inc = _src([[date(2025, 1, 5), "Salary", "s", 1000.0, 100.0, None]])
+    div = pd.DataFrame({"date": [date(2025, 2, 1)], "amount": [40.0]})
+    sold = pd.DataFrame({"date": [date(2025, 3, 1)], "pnl": [-25.0]})
+    df = an.income_frame(inc, div, sold)
+    assert df["amount"].sum() == 1000 - 100 + 40 - 25 == 915
+    assert "Insurance Premium" not in set(df["source"])
+    assert an.income_frame(inc, div, sold, include_auto=False)["amount"].sum() == 900
+
+
+def test_summary_income_is_source_total_minus_premiums_paid():
+    inc = _src([[date(2025, 1, 5), "Salary", "s", 1000.0, 100.0, None]])
+    d, r = _empty_auto()
+    prem = pd.DataFrame({"date": [date(2025, 1, 20), date(2025, 6, 20)], "amount": [60.0, 60.0]})
+    source = an.income_frame(inc, d, r)["amount"].sum()
+    summary = an.income_frame(inc, d, r, premiums=prem)["amount"].sum()
+    assert source == 900 and summary == source - 120 == 780
+
+
+def test_source_pivot_year_with_no_rows_is_zero_not_error():
+    inc = _src([[date(2025, 1, 5), "Salary", "s", 1000.0, None, None]])
+    d, r = _empty_auto()
+    pv = _source_total_row(an.income_frame(inc, d, r), 2030)
+    assert pv.loc["Total", "Total"] == 0
