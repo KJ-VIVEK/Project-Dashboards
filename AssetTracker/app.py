@@ -473,16 +473,25 @@ with tabs[3]:
                 ". Add an end date to count the premiums you paid.")
 
     with st.expander("Add a policy", icon=":material/add:", expanded=ins_y.empty):
+        roots_all = insurance[insurance["parent_id"].isna()]
+        mains = {int(r["id"]): r["name"] for _, r in roots_all.iterrows()}
         with st.form("add_ins", clear_on_submit=True, border=False):
             st.markdown("##### The policy")
             c = st.columns(3)
-            name = c[0].text_input("Policy name")
-            typ = c[1].selectbox("Type", db.INSURANCE_TYPES)
-            prov = c[2].text_input("Provider")
+            target = c[0].selectbox("Add to", [0] + list(mains), key="ins_target",
+                                    format_func=lambda i: "A new policy" if i == 0 else f"Renew / extend: {mains[i]}",
+                                    help="Pick an existing policy to add this year's Own Damage / Third Party renewal "
+                                         "under it. Its name, type, provider and insured person are kept.")
+            name = c[1].text_input("Policy name", placeholder="e.g. DUKE 390 or Family health")
+            typ = c[2].selectbox("Type", db.INSURANCE_TYPES)
             c = st.columns(3)
-            pno = c[0].text_input("Policy number")
-            cover = c[1].number_input("Sum assured (₹)", min_value=0.0, step=100000.0, format="%.0f")
-            link = c[2].text_input("Link to policy", placeholder="https://… or Drive link")
+            prov = c[0].text_input("Provider")
+            pno = c[1].text_input("Policy number", help="For a renewal, the number of the new term.")
+            who = c[2].selectbox("Insured", db.INSURED_FOR, help="Whom the policy covers.")
+            c = st.columns(2)
+            cover = c[0].number_input("Sum assured (₹)", min_value=0.0, step=100000.0, format="%.0f",
+                                      help="For a vehicle policy, set the amount on each of OD and TP below instead.")
+            link = c[1].text_input("Link to policy", placeholder="https://… or Drive link")
             st.markdown("##### Premium")
             c = st.columns(3)
             prem = c[0].number_input("Premium each time (₹)", min_value=0.0, step=500.0, format="%.2f",
@@ -494,10 +503,11 @@ with tabs[3]:
             c = st.columns(3)
             p_start = dinput(c[0], "Start date", value=None)
             p_end = dinput(c[1], "End date", value=None, help="Leave empty while the policy is running.")
-            st.markdown("##### Vehicle insurance: Own Damage and Third Party (optional)")
-            st.caption("Vehicle policies have two parts under one policy: OD, renewed every year, and TP, which runs "
-                       "for several years. Fill these instead of the premium above; each part keeps its own premium, "
-                       "sum insured and period. Renew or add parts later in “Add a cover to a policy”.")
+            st.markdown("##### Vehicle insurance: Own Damage and Third Party")
+            st.caption("A vehicle policy has two parts: Own Damage (OD), renewed every year, and Third Party (TP), which "
+                       "can run for several years. Fill these instead of the premium above; each part has its own premium, "
+                       "sum insured and period. An empty end date means one year. To renew next year, choose the policy "
+                       "in “Add to” and fill the parts again.")
             covers = {}
             for key, label, hint in (("od", "Own Damage (OD)", "the vehicle's insured value (IDV)"),
                                      ("tp", "Third Party (TP)", "the third-party cover amount")):
@@ -513,110 +523,38 @@ with tabs[3]:
             if st.form_submit_button("Add policy", type="primary"):
                 used = {k: v for k, v in covers.items() if v[1] > 0}
                 bad = [v[0] for v in used.values() if v[3] and v[4] and v[4] < v[3]]
-                cover_sums = {k: v[5] for k, v in used.items()}
-                if not name.strip() or (prem <= 0 and not used):
-                    st.error("A name and a premium above zero (or an OD / TP premium) are needed.")
-                elif p_start and p_end and p_end < p_start:
+                if target == 0 and not name.strip():
+                    st.error("A policy name is needed.")
+                elif target == 0 and prem <= 0 and not used:
+                    st.error("A premium above zero (or an OD / TP premium) is needed.")
+                elif target != 0 and not used:
+                    st.error("Fill an Own Damage or Third Party premium to add under the existing policy.")
+                elif target == 0 and not used and p_start and p_end and p_end < p_start:
                     st.error("The end date is before the start date.")
                 elif bad:
                     st.error("The end date is before the start date for: " + ", ".join(bad))
-                elif used and any(not (v[3] and v[4]) for v in used.values() if v[2] == db.ONE_TIME):
-                    st.error("A one-time premium needs both a start and an end date.")
+                elif any(not v[3] for v in used.values()):
+                    st.error("Give a start date for each of OD and TP that has a premium.")
                 else:
-                    pid = db.insert("insurance", {"name": name, "type": typ, "provider": prov, "policy_no": pno,
-                                                  "sum_assured": cover or None, "premium": 0 if used else prem,
-                                                  "frequency": "Yearly" if used else freq, "next_due": nxt,
-                                                  "link": link, "active": True,
-                                                  "start_date": None if used else p_start,
-                                                  "end_date": None if used else p_end})
+                    if target == 0:
+                        pid, base = db.insert("insurance", {
+                            "name": name, "type": typ, "provider": prov, "policy_no": pno, "insured_for": who,
+                            "sum_assured": cover or None, "premium": 0 if used else prem,
+                            "frequency": "Yearly" if used else freq, "next_due": nxt, "link": link, "active": True,
+                            "start_date": None if used else p_start, "end_date": None if used else p_end}), \
+                            {"name": name, "type": typ, "provider": prov, "policy_no": pno, "insured_for": who}
+                    else:
+                        par = roots_all[roots_all["id"] == target].iloc[0]
+                        pid = target
+                        base = {"name": par["name"], "type": par["type"], "provider": par["provider"],
+                                "policy_no": pno or par["policy_no"], "insured_for": par["insured_for"]}
                     for label, cp, cf, cs, ce, ci in used.values():
-                        db.insert("insurance", {"name": f"{name} · {label}", "type": typ, "provider": prov,
-                                                "policy_no": pno, "premium": cp, "frequency": cf, "start_date": cs,
-                                                "end_date": ce, "active": True, "parent_id": pid, "component": label,
+                        db.insert("insurance", {**base, "name": f"{base['name']} · {label}", "premium": cp,
+                                                "frequency": cf, "start_date": cs, "end_date": ce or an.renewal_end(cs),
+                                                "active": True, "parent_id": pid, "component": label,
                                                 "sum_assured": ci or None})
-                    flash("Policy added.")
+                    flash("Policy added." if target == 0 else f"Added under {base['name']}.")
                     st.rerun()
-
-    with st.expander("Renew a motor policy (this year's OD and TP)", icon=":material/two_wheeler:"):
-        st.caption("Make one main policy per vehicle (e.g. DUKE 390). Every year, add that year's renewal here: it adds the "
-                   "Own Damage and Third Party covers with their own premiums under the same policy. Leave the TP "
-                   "premium at 0 when the Third Party cover was already paid for several years.")
-        roots_r = insurance[insurance["parent_id"].isna()]
-        if roots_r.empty:
-            st.write("Add the main policy first (Add a policy, type Vehicle).")
-        else:
-            with st.form("renew_motor", clear_on_submit=True, border=False):
-                rn2 = {int(r["id"]): r["name"] for _, r in roots_r.iterrows()}
-                c = st.columns(3)
-                rpid = c[0].selectbox("Policy", list(rn2), format_func=rn2.get, key="ren_policy")
-                rno = c[1].text_input("Policy number for this renewal", key="ren_no")
-                rs = dinput(c[2], "Starts on", value=None, key="ren_s")
-                c = st.columns(3)
-                re_ = dinput(c[0], "Ends on", value=None, key="ren_e",
-                             help="Leave empty for one year (the day before the next anniversary).")
-                od_p = c[1].number_input("Own Damage premium (₹)", min_value=0.0, step=500.0, format="%.2f", key="ren_od")
-                tp_p = c[2].number_input("Third Party premium (₹)", min_value=0.0, step=500.0, format="%.2f", key="ren_tp",
-                                         help="0 when TP is already paid for several years.")
-                c = st.columns(3)
-                tp_e = dinput(c[0], "Third Party ends on", value=None, key="ren_tpe",
-                              help="Leave empty to end with this renewal. For a 5-year TP, give its last day.")
-                od_i = c[1].number_input("Own Damage sum insured / IDV (₹)", min_value=0.0, step=10000.0, format="%.0f",
-                                         key="ren_odi", help="The insured declared value changes each year.")
-                tp_i = c[2].number_input("Third Party sum insured (₹)", min_value=0.0, step=10000.0, format="%.0f",
-                                         key="ren_tpi")
-                if st.form_submit_button("Add renewal", type="primary"):
-                    if rs is None or (od_p <= 0 and tp_p <= 0):
-                        st.error("A start date and an Own Damage or Third Party premium are needed.")
-                    elif re_ and re_ < rs or (tp_e and tp_e < rs):
-                        st.error("An end date is before the start date.")
-                    else:
-                        end = re_ or an.renewal_end(rs)
-                        par = roots_r[roots_r["id"] == rpid].iloc[0]
-                        for label, prem_, end_, ins_ in (("Own Damage (OD)", od_p, end, od_i),
-                                                         ("Third Party (TP)", tp_p, tp_e or end, tp_i)):
-                            if prem_ > 0:
-                                db.insert("insurance", {
-                                    "name": f"{par['name']} · {label}", "type": par["type"], "provider": par["provider"],
-                                    "policy_no": rno or par["policy_no"], "premium": prem_, "frequency": db.ONE_TIME,
-                                    "start_date": rs, "end_date": end_, "active": True, "parent_id": rpid,
-                                    "component": label, "sum_assured": ins_ or None})
-                        flash(f"Renewal from {rs} added to {par['name']}.")
-                        st.rerun()
-
-    with st.expander("Add a cover to a policy (OD, TP, renewal)", icon=":material/shield:"):
-        st.caption("Renew the yearly Own Damage cover, add a multi-year Third Party cover, or any add-on. It is "
-                   "counted under the same policy.")
-        roots = insurance[insurance["parent_id"].isna()] if "parent_id" in insurance else insurance
-        if roots.empty:
-            st.write("Add a policy first.")
-        else:
-            with st.form("add_cover", clear_on_submit=True, border=False):
-                rn = {int(r["id"]): r["name"] for _, r in roots.iterrows()}
-                c = st.columns(3)
-                cpid = c[0].selectbox("Policy", list(rn), format_func=rn.get, key="cover_policy")
-                ctype = c[1].selectbox("Cover", db.COVER_TYPES, key="cover_type")
-                cprem = c[2].number_input("Premium (₹)", min_value=0.0, step=500.0, format="%.2f", key="cover_prem")
-                c = st.columns(4)
-                cfreq = c[0].selectbox("Paid", db.FREQUENCY_OPTIONS, index=4, key="cover_freq")
-                cs = dinput(c[1], "Start date", value=None, key="cover_s")
-                ce = dinput(c[2], "End date", value=None, key="cover_e")
-                csum = c[3].number_input("Sum insured (₹)", min_value=0.0, step=10000.0, format="%.0f", key="cover_sum")
-                if st.form_submit_button("Add cover", type="primary"):
-                    if cprem <= 0 or cs is None:
-                        st.error("A premium above zero and a start date are needed.")
-                    elif ce and ce < cs:
-                        st.error("The end date is before the start date.")
-                    elif cfreq == db.ONE_TIME and ce is None:
-                        st.error("A one-time premium needs an end date.")
-                    else:
-                        par = roots[roots["id"] == cpid].iloc[0]
-                        db.insert("insurance", {"name": f"{par['name']} · {ctype}", "type": par["type"],
-                                                "provider": par["provider"], "policy_no": par["policy_no"],
-                                                "premium": cprem, "frequency": cfreq, "start_date": cs, "end_date": ce,
-                                                "active": True, "parent_id": cpid, "component": ctype,
-                                                "sum_assured": csum or None})
-                        flash(f"{ctype} added to {par['name']}.")
-                        st.rerun()
 
     with st.expander("Premium changed? Record the new amount", icon=":material/price_change:"):
         st.caption("Keep the same policy and say from when the amount to pay changed (a tax change, a repricing…). "
@@ -665,7 +603,8 @@ with tabs[3]:
         dots = {"Active": "🟢 Active", "Inactive": "⚪ Inactive", "Not started": "🟡 Not started"}
         order = {"Active": 0, "Not started": 1, "Inactive": 2}
         g = pol.assign(_o=pol["status"].map(order)).sort_values(["_o", "name"])
-        t = pd.DataFrame({"Policy": g["name"], "Status": g["status"].map(dots), "Covers": g["covers"].replace("", "–"),
+        t = pd.DataFrame({"Policy": g["name"], "For": g["insured_for"].map(lambda v: v if isinstance(v, str) else "–"),
+                          "Status": g["status"].map(dots), "Covers": g["covers"].replace("", "–"),
                           "Premium paid": g["paid_to_date"].map(lambda v: "–" if pd.isna(v) else an.inr(v)),
                           "Insurance amount": [i if i else an.inr(a) for i, a in zip(g["insured"], an.num(g["sum_assured"]))]})
         st.markdown("##### Policies")
@@ -710,6 +649,7 @@ with tabs[3]:
             "frequency": st.column_config.SelectboxColumn("Paid", options=db.FREQUENCY_OPTIONS, required=True),
             "next_due": dcol("Next due"), "parent_id": None,
             "component": st.column_config.SelectboxColumn("Cover", options=db.COVER_TYPES),
+            "insured_for": st.column_config.SelectboxColumn("Insured", options=db.INSURED_FOR),
             "start_date": dcol("Start"), "end_date": dcol("End"),
             "link": st.column_config.LinkColumn("Policy link", display_text="Open"), "notes": "Notes",
             "active": st.column_config.CheckboxColumn("Active")}, ("name", "premium", "frequency"), "insurance",
