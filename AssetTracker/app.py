@@ -20,7 +20,7 @@ LOAN_COLORS = {"Good": "#1baf7a", "Bad": "#eda100", "Worst": "#d6403a"}
 BUCKET_COLORS = ["#2a78d6", "#6aa7ea", "#1baf7a", "#74d1ac", "#eda100", "#f3c85c", "#6250d6", "#a396ea",
                  "#eb6834", "#d6403a", "#c9a227", "#9aa0a6", "#8c5a3c"]
 IDEAL, REAL = "#898781", "#2a78d6"
-MEMO_ROW = "EPF / NPS (not in Total)"
+MEMO_ROW = "EPF or NPS or Vouchers or Insurance (not in Total)"
 
 
 # ------------------------------------------------------------------ helpers
@@ -214,6 +214,7 @@ real_estate = db.get_table("real_estate")
 notes = db.get_table("notes")
 prices = db.metal_prices()
 fx = db.usd_inr()
+extra_pct = float(db.meta_get("extra_tax_pct", 0) or 0)   # extra tax % on FD/Dividend, PL Booking, Miscellaneous
 
 positions, realised, pos_warnings = an.build_positions(securities, trades, dividends, fx)
 metals_f = an.metals_frame(metals, prices)
@@ -269,7 +270,8 @@ with tabs[0]:
     prem_on = st.toggle("Subtract insurance premiums paid (from the Insurance tab)", value=True, key="sum_prem",
                         help="Each premium is subtracted in the month you paid it (a yearly premium whole, on its start "
                              "date and each anniversary; a monthly one every month), like Taxes Paid.")
-    inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None, usd_inr=fx)
+    inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None, usd_inr=fx,
+                         extra_tax_pct=extra_pct)
     years = sorted(inc["year"].unique(), reverse=True)
     period = st.selectbox("Period", ["All time"] + years, key="sum_year",
                           help="Drives the income chart, 'where the income went' and the ideal values below.")
@@ -382,8 +384,8 @@ with tabs[0]:
 # ================================================================== 2. SOURCE (income)
 with tabs[1]:
     st.caption("Everything you earn, by month (use a negative amount for a loss, e.g. an FD closed early). Each entry "
-               "carries its own **Taxes paid**, which is subtracted, so income shown is after tax. **Put in EPF / NPS or "
-               "returned** is money that was taken off but is still yours, so it is only recorded, never subtracted. "
+               "carries its own **Taxes paid**, which is subtracted, so income shown is after tax. **EPF or NPS or "
+               "Vouchers or Insurance** is money taken off but still yours, so it is only recorded, never subtracted. "
                "Dividends and realised profit/loss from the Stocks tab appear in the tables below automatically "
                "(switch this off on the Summary tab).")
     with st.form("add_income", clear_on_submit=True, border=False):
@@ -396,8 +398,8 @@ with tabs[1]:
                                 help="Negative for a loss or money lost, e.g. an FD closed early.")
         tax = c[1].number_input("Taxes paid (₹)", min_value=0.0, step=500.0, format="%.2f",
                                 help="Taken off this inflow. Kept on the same entry.")
-        oth = c[2].number_input("Put in EPF / NPS or returned (₹)", min_value=0.0, step=500.0, format="%.2f",
-                                help="Taken off this inflow but still yours: EPF, NPS, an amount given back to you. "
+        oth = c[2].number_input("EPF or NPS or Vouchers or Insurance (₹)", min_value=0.0, step=500.0, format="%.2f",
+                                help="Taken off this inflow but still yours: EPF, NPS, vouchers, insurance. "
                                      "Only recorded, not subtracted from income.")
         if c[3].form_submit_button("Add", width="stretch", type="primary"):
             if amt == 0:
@@ -410,7 +412,12 @@ with tabs[1]:
                 st.rerun()
 
     # insurance premiums are their own section (Insurance tab); only the Summary subtracts them
-    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True), usd_inr=fx)
+    inc = an.income_frame(income, dividends, realised, st.session_state.get("sum_auto", True), usd_inr=fx,
+                          extra_tax_pct=extra_pct)
+    st.number_input("Extra tax to be paid (%)", min_value=0.0, max_value=100.0, value=extra_pct, step=1.0, format="%.2f",
+                    key="extra_tax_pct_in", on_change=lambda: db.meta_set("extra_tax_pct", st.session_state["extra_tax_pct_in"]),
+                    help="Applied to the total of Dividend/FD, PL Booking and Miscellaneous, and subtracted from the final "
+                         "value as its own line (“Extra tax to be paid”). 0 switches it off. It also applies on the Summary.")
     view = st.radio("View", ["Per month", "Per year"], horizontal=True, key="src_view")
     if view == "Per month":
         ys = sorted(inc["year"].unique(), reverse=True) or [date.today().year]
@@ -433,10 +440,12 @@ with tabs[1]:
     # money taken off an inflow but not lost, for the period shown above
     dts_all = pd.to_datetime(income["date"], errors="coerce")
     in_period = (dts_all.dt.year == yr) if view == "Per month" else dts_all.notna()
-    k = st.columns(3)
+    k = st.columns(4)
     kpi(k[0], "Income after tax" + (f" ({yr})" if view == "Per month" else " (all years)"), float(pv.loc["Total", "Total"]))
     kpi(k[1], "Taxes paid", float(-pv.loc[db.TAX_SOURCE, "Total"]))
-    kpi(k[2], "Put in EPF / NPS or returned", float(an.num(income.loc[in_period, "other_deductions"]).sum()),
+    kpi(k[2], "Extra tax to be paid", float(-pv.loc[db.EXTRA_TAX_SOURCE, "Total"]),
+        help=f"{extra_pct:g}% of Dividend/FD + PL Booking + Miscellaneous, subtracted from the Total.")
+    kpi(k[3], "EPF or NPS or Vouchers or Insurance", float(an.num(income.loc[in_period, "other_deductions"]).sum()),
         help="Recorded only. It is still your money, so it is not subtracted from income.")
 
     yo = an.inflow_by_year(inc)
@@ -444,29 +453,37 @@ with tabs[1]:
         st.markdown("##### Income growth, year on year")
         avg = an.average_growth(yo["yoy_pct"])
         trend = an.growth_line(yo.set_index("year")["net"], avg)
+        pct = lambda s: [("" if pd.isna(v) else f"{v:+.0f}%") for v in s]
+        lab = dict(size=12)
         fig = go.Figure()
         fig.add_bar(x=yo["year"], y=yo["tax"], name="Tax paid", marker_color="rgba(214,64,58,0.35)",
                     marker_line=dict(color="#d6403a", width=1.5),
+                    text=pct(yo["tax_yoy_pct"]), textposition="outside", textfont=dict(size=12, color="#d6403a"),
                     customdata=yo["tax_yoy_pct"].fillna(0),
                     hovertemplate="%{x}: ₹%{y:,.0f} tax<br>vs last year: %{customdata:+.1f}%<extra></extra>")
-        fig.add_scatter(x=yo["year"], y=yo["gross"], name="Before tax", mode="lines+markers",
+        fig.add_scatter(x=yo["year"], y=yo["gross"], name="Before tax", mode="lines+markers+text",
                         line=dict(color="#1baf7a", width=3), marker=dict(size=9),
+                        text=pct(yo["gross_yoy_pct"]), textposition="top center", textfont=dict(size=12, color="#1baf7a"),
                         customdata=yo["gross_yoy_pct"].fillna(0),
                         hovertemplate="%{x}: ₹%{y:,.0f} before tax<br>vs last year: %{customdata:+.1f}%<extra></extra>")
-        fig.add_scatter(x=yo["year"], y=yo["net"], name="After tax", mode="lines+markers",
+        fig.add_scatter(x=yo["year"], y=yo["net"], name="After tax", mode="lines+markers+text",
                         line=dict(color="#eb6834", width=3), marker=dict(size=9),
+                        text=pct(yo["yoy_pct"]), textposition="bottom center", textfont=dict(size=12, color="#eb6834"),
                         customdata=yo["yoy_pct"].fillna(0),
                         hovertemplate="%{x}: ₹%{y:,.0f} after tax<br>vs last year: %{customdata:+.1f}%<extra></extra>")
         if avg is not None:
-            fig.add_scatter(x=yo["year"], y=trend.values, name=f"Average growth ({avg:+.1f}% a year)", mode="lines",
+            fig.add_scatter(x=yo["year"], y=trend.values, name=f"Average growth ({avg:+.1f}% a year)", mode="lines+text",
                             line=dict(color="#000000", width=2, dash="dot"),
+                            text=[""] * (len(yo) - 1) + [f"avg {avg:+.1f}% / yr"], textposition="middle right",
+                            textfont=dict(size=12, color="#000000"), cliponaxis=False,
                             hovertemplate="%{x}: ₹%{y:,.0f} at the average growth<extra></extra>")
         fig.update_xaxes(type="category")
         fig.update_yaxes(tickprefix="₹", tickformat="~s")
         fig.update_layout(barmode="group", bargap=0.55, hovermode="x unified")
         fig.update_xaxes(tickfont=dict(size=13))
         fig.update_yaxes(tickfont=dict(size=12), nticks=7)
-        show(style(fig, "Income and tax per year", height=480))
+        show(style(fig, "Income and tax per year, with the % change from the year before", height=520)
+             .update_layout(margin=dict(r=90)))
         chg = pd.DataFrame({"Before tax": yo["gross_yoy_pct"], "After tax": yo["yoy_pct"], "Tax paid": yo["tax_yoy_pct"]})
         chg.index = yo["year"].astype(str)
         st.caption("Change from the year before")
@@ -586,8 +603,8 @@ with tabs[1]:
         "rsu_sell_date": dcol("RSU sell date"),
         "rsu_sell_fx": st.column_config.NumberColumn("USD→₹ on sell date", min_value=0, format="%.4f",
                                                       help="Tax = sold × sell price × this rate, deducted as Taxes Paid."),
-        "other_deductions": money_cfg("EPF / NPS / returned (₹)",
-                                      help="Put in EPF/NPS or given back to you. Recorded only, not subtracted.")},
+        "other_deductions": money_cfg("EPF or NPS or Vouchers or Insurance (₹)",
+                                      help="EPF, NPS, vouchers or insurance taken off this inflow. Recorded only, not subtracted.")},
         ("date", "source", "amount"), "income")
 
 # ================================================================== 3. CASH & SAVINGS

@@ -926,3 +926,24 @@ def test_fx_history_picks_the_last_close_on_or_before_the_day():
     assert market.parse_fx_history(payload, date(2026, 5, 5)) == 84.5
     assert market.parse_fx_history(payload, date(2026, 4, 1)) is None
     assert market.parse_fx_history({}, date(2026, 5, 5)) is None
+
+
+def test_extra_tax_is_a_percentage_of_fd_dividend_pl_and_misc_subtracted_from_the_total():
+    inc = _src([[date(2025, 1, 5), "Salary", "pay", 1000.0, 100.0, None],
+                [date(2025, 1, 6), "Dividend/FD", "fd", 400.0, None, None],
+                [date(2025, 1, 7), "PL Booking", "swing", 100.0, None, None],
+                [date(2025, 2, 7), "Miscellaneous", "gift", 500.0, None, None],
+                [date(2026, 2, 7), "PL Booking", "loss", -200.0, None, None]])
+    d, r = _empty_auto()
+    df = an.income_frame(inc, d, r, extra_tax_pct=30.0)
+    base = 400 + 100 + 500 - 200                                  # Salary is not part of the base
+    assert round(-df.loc[df["source"] == "Extra tax to be paid", "amount"].sum(), 6) == 0.3 * base == 240
+    assert round(df["amount"].sum(), 6) == 1000 - 100 + base - 240
+    m25 = _source_total_row(df, 2025)
+    assert round(m25.loc["Extra tax to be paid", 1], 6) == -150 and round(m25.loc["Extra tax to be paid", 2], 6) == -150
+    y = _source_total_row(df, None, by="year")                    # month and year views agree
+    assert round(y.loc["Extra tax to be paid", "Total"], 6) == -240
+    assert round(y.loc["Total", "Total"], 6) == round(df["amount"].sum(), 6)
+    assert "Extra tax to be paid" not in set(an.income_frame(inc, d, r)["source"])        # 0% adds nothing
+    yo = an.inflow_by_year(df).set_index("year")
+    assert round(yo.loc[2025, "tax"], 6) == 100 + 300             # tax paid + extra tax count as tax in the chart
