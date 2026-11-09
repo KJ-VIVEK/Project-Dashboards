@@ -113,38 +113,62 @@ def saved_msg(stats):
     return msg
 
 
-def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None, delete_box=False):
+def _row_label(row, cols):
+    """A short description of a row for the delete confirmation: its first few filled-in cells."""
+    bits = [str(row[c]) for c in cols if c in row.index and pd.notna(row[c]) and str(row[c]) != ""]
+    return " · ".join(bits[:5])
+
+
+def edit_table(table, shown, orig, config, required, key, to_db=None, hint=None):
     """Editable sheet: edit cells or delete rows (new rows are added through the forms above). Save writes the diff.
 
-    delete_box=True uses a fixed-size editor with a Delete checkbox column instead of the editor's own row deletion:
-    Streamlit keeps typed-but-unsaved edits across data changes only for fixed-size editors, which is what lets a
-    column worked out from the typed cells (extra tax to be paid) update live."""
+    Nothing is ever deleted silently: if a save would remove rows, they are listed and you must confirm."""
     cfg = {"id": None, **config}
-    if delete_box:
-        shown = shown.copy()
-        shown.insert(0, "delete", False)
-        cfg = {"delete": st.column_config.CheckboxColumn("Delete", help="Tick, then press Save changes to delete the row."),
-               **cfg}
-    ed = st.data_editor(shown, key=f"ed_{key}_{version(key)}", num_rows="fixed" if delete_box else "delete",
-                        hide_index=True, column_config=cfg, width="stretch")
+    ed = st.data_editor(shown, key=f"ed_{key}_{version(key)}", num_rows="delete", hide_index=True,
+                        column_config=cfg, width="stretch")
+    pkey = f"_pending_delete_{key}"
+
+    def apply(edited):
+        if len(set(orig["id"].astype(int)) - set(pd.to_numeric(edited["id"]).dropna().astype(int))):
+            db.backup()  # safety copy before anything is deleted
+        flash(saved_msg(db.sync_table(table, orig, edited, required)))
+        st.session_state.pop(pkey, None)
+        bump(key)
+        st.rerun()
+
     c1, c2 = st.columns([1, 5], vertical_alignment="center")
     if c1.button("Save changes", key=f"save_{key}", type="primary"):
-        if delete_box:
-            ed = ed[~ed["delete"].fillna(False).astype(bool)].drop(columns="delete")
+        st.session_state.pop(pkey, None)
         edited = to_db(ed) if to_db else ed
         problems = validation.validate(table, edited, required)
         if problems:        # say exactly what is wrong; nothing is saved and the editor keeps what was typed
             st.error("**Nothing was saved.** Fix these and press Save changes again:\n\n"
                      + "\n".join(f"- {p}" for p in problems), icon=":material/error:")
         else:
-            removed = set(orig["id"].astype(int)) - set(pd.to_numeric(edited["id"]).dropna().astype(int))
-            if removed:
-                db.backup()  # safety copy before anything is deleted
-            flash(saved_msg(db.sync_table(table, orig, edited, required)))
-            bump(key)
-            st.rerun()
-    c2.caption(hint or ("Edit cells directly. To delete, tick Delete on the row; then Save changes." if delete_box else
-                        "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes."))
+            removed = sorted(set(orig["id"].astype(int)) - set(pd.to_numeric(edited["id"]).dropna().astype(int)))
+            if removed:     # ask first, showing exactly what would go
+                st.session_state[pkey] = (edited, removed)
+            else:
+                apply(edited)
+    c2.caption(hint or "Edit cells directly. To delete, tick the row's left edge and press Delete; then Save changes.")
+
+    if pkey in st.session_state:
+        edited, removed = st.session_state[pkey]
+        by_id = {int(r["id"]): r for _, r in orig.iterrows()}
+        cols = [c for c in orig.columns if c != "id"]
+        with st.container(border=True):
+            st.warning(f"**Saving will delete {len(removed)} row{'s' if len(removed) != 1 else ''}.** "
+                       "Check the list. If you did not mean to delete them, press Cancel.", icon=":material/warning:")
+            for i in removed[:15]:
+                st.write("- " + _row_label(by_id[i], cols))
+            if len(removed) > 15:
+                st.write(f"- … and {len(removed) - 15} more")
+            b1, b2, _ = st.columns([1.3, 1, 4])
+            if b1.button(f"Yes, delete {len(removed)}", key=f"del_yes_{key}", type="primary"):
+                apply(edited)
+            if b2.button("Cancel", key=f"del_no_{key}"):
+                st.session_state.pop(pkey, None)
+                st.rerun()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -607,15 +631,14 @@ with tabs[1]:
     sub = income[mask]
     # tax to be paid on each row, shown next to the % (read-only: it is worked out from the saved amount and %)
     cols_ = list(sub.columns)
-    typed = st.session_state.get(f"ed_income_{version('income')}", {}).get("edited_rows", {})
-    live_due = an.extra_tax_rows(an.apply_editor_edits(sub, typed), extra_pct)      # uses cells typed but not saved yet
-    shown_inc = sub.assign(tax_due=live_due.where(live_due != 0).values)
+    saved_due = an.extra_tax_rows(sub, extra_pct)
+    shown_inc = sub.assign(tax_due=saved_due.where(saved_due != 0).values)
     cols_.insert(cols_.index("tax_pct") + 1, "tax_due")
     shown_inc = shown_inc[cols_]
     st.caption("**Extra tax (%)** is the % to charge on a Dividend/FD, PL Booking or Miscellaneous entry; **Extra tax to be "
-               "paid (₹)** shows the result (amount × %) as soon as you type the %. Type a % on entries whose tax shows 0. "
-               f"An entry with no % uses the default ({extra_pct:g}%) only when no tax is entered on it. Press Save changes "
-               "to keep it.")
+               "paid (₹)** shows the result (amount × %). Type a % on entries whose tax shows 0; a preview of what you "
+               "typed appears under the table, and the column itself updates after Save changes. "
+               f"An entry with no % uses the default ({extra_pct:g}%) only when no tax is entered on it.")
     edit_table("income", shown_inc, sub, {
         "date": dcol("Date", required=True),
         "source": st.column_config.SelectboxColumn("Section", options=db.INCOME_SOURCES, required=True),
@@ -638,7 +661,19 @@ with tabs[1]:
                                                       help="Tax = sold × sell price × this rate, deducted as Taxes Paid."),
         "other_deductions": money_cfg("EPF or NPS or Vouchers or Insurance (₹)",
                                       help="EPF, NPS, vouchers or insurance taken off this inflow. Recorded only, not subtracted.")},
-        ("date", "source", "amount"), "income", delete_box=True)
+        ("date", "source", "amount"), "income")
+    typed = st.session_state.get(f"ed_income_{version('income')}", {}).get("edited_rows", {})
+    typed = {k: v for k, v in typed.items() if {"tax_pct", "amount", "tax_paid", "source"} & set(v)}
+    if typed:       # what the cells typed so far work out to, before anything is saved (the table itself is not touched)
+        live = an.apply_editor_edits(sub, typed)
+        due = an.extra_tax_rows(live, extra_pct)
+        pos = sorted(int(k) for k in typed if int(k) < len(live))
+        prev = pd.DataFrame({"Date": live.loc[pos, "date"], "Source": live.loc[pos, "source"],
+                             "Amount (₹)": an.num(live.loc[pos, "amount"]).map(an.inr),
+                             "Extra tax (%)": live.loc[pos, "tax_pct"].map(lambda v: "default" if pd.isna(v) else f"{v:g}%"),
+                             "Extra tax to be paid (₹)": due.loc[pos].map(an.inr)})
+        st.caption("Preview of what you typed (not saved yet): extra tax to be paid = amount × the %.")
+        st.dataframe(prev, hide_index=True, width="stretch")
 
 # ================================================================== 3. CASH & SAVINGS
 with tabs[2]:

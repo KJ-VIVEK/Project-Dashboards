@@ -25,7 +25,8 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
 | **Notes** | Todos / ideas: add, edit, mark done, delete. |
 
 ## Live prices and USD
-- **Editing tables** checks every row before saving (required values, numbers above zero, valid choices, dates in order
+- **Deleting rows** never happens silently: if a save would remove rows, the app lists them and asks you to confirm
+  (a backup is taken first). **Editing tables** checks every row before saving (required values, numbers above zero, valid choices, dates in order
   and between 1995 and 2100). If anything is wrong you get a list of the rows and fields, nothing is saved, and what you
   typed stays in the table to fix. The rules live in `validation.py`.
 - **Symbol** on a holding turns on live pricing: `RELIANCE.NS` / `TCS.BO` (Indian stocks and ETFs), `AAPL` (US),
