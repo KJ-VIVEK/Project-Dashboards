@@ -446,3 +446,70 @@ def test_blank_text_fields_do_not_leak_nan():
     k = dict(KTM, lender=None, link=float("nan"), details=None)
     md = an.loans_markdown(pd.DataFrame([k]))
     assert "nan" not in md.lower() and "Lender: –" in md and "Documents" not in md
+
+
+# ---------------------------------------------------------------- insurance: start/end dates and premium changes
+TODAY = date(2026, 11, 9)
+
+
+def _policy(**kw):
+    base = {"id": 1, "name": "P", "premium": 1800.0, "frequency": "Monthly", "active": True,
+            "start_date": None, "end_date": None}
+    return pd.DataFrame([{**base, **kw}])
+
+
+def test_monthly_policy_part_year_is_premium_times_months_over_twelve():
+    # 1,800 a month = 21,600 a year; in force Jul-Dec 2026 (6 months) -> 21,600 x 6 / 12 = 10,800
+    f = an.insurance_frame(_policy(start_date=date(2026, 7, 15)), year=2026, today=TODAY).iloc[0]
+    assert f["months_in_year"] == 6 and f["year_cost"] == pytest.approx(10800)
+    assert f["per_year"] == 21600 and f["per_month"] == 1800
+
+
+def test_end_date_stops_the_cost_and_full_year_equals_annual_premium():
+    p = _policy(start_date=date(2025, 3, 1), end_date=date(2026, 4, 30))
+    assert an.insurance_frame(p, year=2025, today=TODAY).iloc[0]["year_cost"] == pytest.approx(1800 * 10)   # Mar-Dec
+    assert an.insurance_frame(p, year=2026, today=TODAY).iloc[0]["year_cost"] == pytest.approx(1800 * 4)    # Jan-Apr
+    assert an.insurance_frame(p, year=2027, today=TODAY).iloc[0]["year_cost"] == 0
+    f = an.insurance_frame(p, year=2026, today=TODAY).iloc[0]
+    assert f["per_year"] == 0                                           # ended: costs nothing going forward
+    assert f["paid_to_date"] == pytest.approx(1800 * 14) and f["months_to_date"] == 14
+    full = an.insurance_frame(_policy(start_date=date(2020, 1, 1)), year=2026, today=TODAY).iloc[0]
+    assert full["year_cost"] == pytest.approx(21600) and full["months_in_year"] == 12
+
+
+def test_yearly_and_quarterly_are_spread_per_month_not_paid_in_a_lump():
+    y = an.insurance_frame(_policy(premium=12000.0, frequency="Yearly", start_date=date(2026, 10, 1)),
+                           year=2026, today=TODAY).iloc[0]
+    assert y["year_cost"] == pytest.approx(12000 * 3 / 12)              # Oct-Dec
+    q = an.insurance_frame(_policy(premium=3000.0, frequency="Quarterly", start_date=date(2026, 1, 1)),
+                           year=2026, today=TODAY).iloc[0]
+    assert q["year_cost"] == pytest.approx(12000) and q["per_month"] == 1000
+
+
+def test_premium_change_applies_from_its_month_and_keeps_the_policy():
+    term = _policy(premium=18000.0, frequency="Yearly", start_date=date(2022, 4, 1))
+    revs = pd.DataFrame([{"id": 1, "insurance_id": 1, "effective_from": date(2026, 4, 1), "premium": 15000.0,
+                          "note": "GST change"}])
+    f = an.insurance_frame(term, revs, year=2026, today=TODAY).iloc[0]
+    assert f["premium_now"] == 15000 and f["per_year"] == 15000 and f["per_month"] == 1250
+    assert f["year_cost"] == pytest.approx(18000 * 3 / 12 + 15000 * 9 / 12)        # Jan-Mar old, Apr-Dec new
+    assert an.insurance_frame(term, revs, year=2025, today=TODAY).iloc[0]["year_cost"] == pytest.approx(18000)
+    # paid to date: Apr 2022 .. Mar 2026 = 48 months at 1,500 + Apr..Nov 2026 = 8 months at 1,250
+    assert f["months_to_date"] == 56 and f["paid_to_date"] == pytest.approx(48 * 1500 + 8 * 1250)
+    # another policy's revisions never leak across
+    other = pd.concat([term, _policy(id=2, premium=500.0)], ignore_index=True)
+    assert an.insurance_frame(other, revs, year=2026, today=TODAY).iloc[1]["premium_now"] == 500
+
+
+def test_lapsed_without_end_date_counts_nothing_and_missing_start_is_unknown():
+    f = an.insurance_frame(_policy(active=False), year=2026, today=TODAY).iloc[0]
+    assert f["year_cost"] == 0 and f["per_year"] == 0
+    g = an.insurance_frame(_policy(), year=2026, today=TODAY).iloc[0]       # no dates: whole year, no history
+    assert g["year_cost"] == pytest.approx(21600) and pd.isna(g["paid_to_date"])
+
+
+def test_deleting_a_policy_removes_its_premium_changes(path):
+    pid = db.insert("insurance", {"name": "Term", "premium": 10, "frequency": "Yearly", "active": True}, path)
+    db.insert("insurance_revisions", {"insurance_id": pid, "effective_from": date(2026, 1, 1), "premium": 9}, path)
+    db.delete_row("insurance", pid, path)
+    assert db.get_table("insurance_revisions", path).empty

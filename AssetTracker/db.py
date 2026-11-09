@@ -61,7 +61,10 @@ CREATE TABLE IF NOT EXISTS insurance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL, type TEXT, provider TEXT, policy_no TEXT, sum_assured REAL,
     premium REAL NOT NULL, frequency TEXT NOT NULL, next_due TEXT, link TEXT, notes TEXT,
-    active INTEGER NOT NULL DEFAULT 1);
+    active INTEGER NOT NULL DEFAULT 1, start_date TEXT, end_date TEXT);
+CREATE TABLE IF NOT EXISTS insurance_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    insurance_id INTEGER NOT NULL, effective_from TEXT NOT NULL, premium REAL NOT NULL, note TEXT);
 CREATE TABLE IF NOT EXISTS loans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL, lender TEXT, category TEXT NOT NULL, principal REAL, outstanding REAL NOT NULL,
@@ -95,7 +98,8 @@ TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
     "savings": (["kind", "name", "amount", "purpose", "interest_rate", "start_date", "maturity_date", "target", "note"],
                 {"start_date", "maturity_date"}, set()),
     "insurance": (["name", "type", "provider", "policy_no", "sum_assured", "premium", "frequency", "next_due",
-                   "link", "notes", "active"], {"next_due"}, {"active"}),
+                   "link", "notes", "active", "start_date", "end_date"], {"next_due", "start_date", "end_date"}, {"active"}),
+    "insurance_revisions": (["insurance_id", "effective_from", "premium", "note"], {"effective_from"}, set()),
     "loans": (["name", "lender", "category", "principal", "outstanding", "interest_rate", "emi", "start_date",
                "end_date", "link", "details", "status", "closed_date", "down_payment", "other_charges",
                "installments_paid", "emi_paid", "emi_interest", "closing_payment"], {"start_date", "end_date", "closed_date"}, set()),
@@ -130,7 +134,8 @@ _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_
                ("real_estate", "current_per_sqft", "REAL"),
                ("loans", "status", "TEXT DEFAULT 'Active'"), ("loans", "closed_date", "TEXT"), ("loans", "down_payment", "REAL"),
                ("loans", "other_charges", "REAL"), ("loans", "installments_paid", "INTEGER"),
-               ("loans", "emi_paid", "REAL"), ("loans", "emi_interest", "REAL"), ("loans", "closing_payment", "REAL")]
+               ("loans", "emi_paid", "REAL"), ("loans", "emi_interest", "REAL"), ("loans", "closing_payment", "REAL"),
+               ("insurance", "start_date", "TEXT"), ("insurance", "end_date", "TEXT")]
 
 
 def init_db(path: str | None = None) -> None:
@@ -221,6 +226,8 @@ def sync_table(table: str, orig: pd.DataFrame, edited: pd.DataFrame, required=()
             if rid not in seen:
                 c.execute(f"DELETE FROM {table} WHERE id=?", (rid,))
                 stats["deleted"] += 1
+        if table == "insurance" and stats["deleted"]:   # a removed policy takes its premium changes with it
+            c.execute("DELETE FROM insurance_revisions WHERE insurance_id NOT IN (SELECT id FROM insurance)")
         if table == "securities" and stats["deleted"]:  # a removed holding takes its history with it
             for child in ("trades", "dividends"):
                 c.execute(f"DELETE FROM {child} WHERE security_id NOT IN (SELECT id FROM securities)")
@@ -251,6 +258,8 @@ def delete_row(table: str, row_id: int, path: str | None = None) -> None:
     assert table in TABLES
     with connect(path) as c:
         c.execute(f"DELETE FROM {table} WHERE id=?", (int(row_id),))
+        if table == "insurance":
+            c.execute("DELETE FROM insurance_revisions WHERE insurance_id=?", (int(row_id),))
 
 
 def delete_security(security_id: int, path: str | None = None) -> None:

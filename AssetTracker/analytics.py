@@ -210,12 +210,103 @@ def real_estate_frame(re_: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------- insurance / loans / savings
-def insurance_frame(ins: pd.DataFrame) -> pd.DataFrame:
+def _ym(d) -> int:
+    """A date as a running month number, so months can be compared and counted."""
+    return d.year * 12 + d.month - 1
+
+
+def _date_or_none(v):
+    return None if v is None or (not hasattr(v, "year")) or pd.isna(v) else v
+
+
+def _policy_schedule(row, revisions: list) -> dict:
+    """Month-by-month rules of one policy: is it in force, and what premium applies, in a given month.
+
+    Each month costs  premium x payments-per-year / 12  (so a monthly 1,800 policy is 21,600 a year, and one in force
+    for 6 months of a year costs 21,600 x 6 / 12 = 10,800 in that year). A premium change applies from the month of its
+    effective date onward."""
+    start, end = _date_or_none(row.get("start_date")), _date_or_none(row.get("end_date"))
+    active = bool(row.get("active", True))
+    mult = db.FREQUENCIES.get(row.get("frequency"), 1)
+    base = float(num(pd.Series([row.get("premium")])).iloc[0])
+    revs = sorted((_ym(d), float(p)) for d, p in revisions)
+
+    def in_force(ym):
+        if not active and end is None:        # lapsed with no end date: unknown when, so it counts for nothing
+            return False
+        return not ((start and ym < _ym(start)) or (end and ym > _ym(end)))
+
+    def premium_at(ym):
+        prem = base
+        for rym, p in revs:
+            if rym <= ym:
+                prem = p
+        return prem
+
+    return {"in_force": in_force, "premium_at": premium_at, "mult": mult, "start": start, "end": end}
+
+
+def _revisions_by_policy(revisions) -> dict:
+    out: dict[int, list] = {}
+    if revisions is not None and len(revisions):
+        for _, r in revisions.iterrows():
+            d = _date_or_none(r["effective_from"])
+            if d is not None and pd.notna(r["premium"]):
+                out.setdefault(int(r["insurance_id"]), []).append((d, r["premium"]))
+    return out
+
+
+def insurance_monthly(ins: pd.DataFrame, revisions: pd.DataFrame | None, year: int) -> pd.DataFrame:
+    """Premium cost of every policy in every month of `year` (rows = policies, columns = 1..12), annualised:
+    a policy paid yearly or quarterly still spreads its cost evenly over the months it is in force."""
+    by_policy = _revisions_by_policy(revisions)
+    out = pd.DataFrame(0.0, index=ins.index, columns=range(1, 13))
+    for idx, row in ins.iterrows():
+        sch = _policy_schedule(row, by_policy.get(int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1, []))
+        for m in range(1, 13):
+            ym = year * 12 + m - 1
+            if sch["in_force"](ym):
+                out.loc[idx, m] = sch["premium_at"](ym) * sch["mult"] / 12
+    return out
+
+
+def insurance_frame(ins: pd.DataFrame, revisions: pd.DataFrame | None = None, year: int | None = None,
+                    today=None) -> pd.DataFrame:
+    """Policies with their premium worked out per month, per year and over time.
+
+    per_month / per_year: the premium rate being paid now (revisions applied), zero once lapsed or ended.
+    year_cost / months_in_year: what the policy costs in `year` (default this year), pro-rated by the months in force.
+    paid_to_date: cost from the start date until today (or the end date); NaN when no start date was entered."""
+    from datetime import date as _date
+    today = today or _date.today()
+    year = year or today.year
     i = ins.copy()
+    if "start_date" not in i:
+        i["start_date"] = None
+    if "end_date" not in i:
+        i["end_date"] = None
+    if "active" not in i:
+        i["active"] = True
     i["premium"] = num(i["premium"])
-    i["per_year"] = i["premium"] * i["frequency"].map(db.FREQUENCIES).fillna(1)
-    i["per_month"] = i["per_year"] / 12
-    i.loc[~i["active"].astype(bool), ["per_year", "per_month"]] = 0.0  # lapsed policies cost nothing going forward
+    monthly = insurance_monthly(i, revisions, year)
+    i["months_in_year"] = (monthly > 0).sum(axis=1)
+    i["year_cost"] = monthly.sum(axis=1)
+
+    by_policy = _revisions_by_policy(revisions)
+    now, rows = _ym(today), []
+    for idx, row in i.iterrows():
+        sch = _policy_schedule(row, by_policy.get(int(row["id"]) if "id" in row and pd.notna(row["id"]) else -1, []))
+        not_started = sch["start"] is not None and _ym(sch["start"]) > now
+        running = sch["in_force"](now) or (bool(row["active"]) and not_started)
+        prem_now = sch["premium_at"](now)
+        per_year = prem_now * sch["mult"] if running else 0.0
+        if sch["start"] is not None:
+            months = [m for m in range(_ym(sch["start"]), now + 1) if sch["in_force"](m)]
+            paid, n = sum(sch["premium_at"](m) * sch["mult"] / 12 for m in months), len(months)
+        else:
+            paid, n = float("nan"), float("nan")
+        rows.append((prem_now, per_year, per_year / 12, paid, n))
+    i["premium_now"], i["per_year"], i["per_month"], i["paid_to_date"], i["months_to_date"] = zip(*rows) if rows else ([],) * 5
     return i
 
 
