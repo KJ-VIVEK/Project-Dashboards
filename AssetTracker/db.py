@@ -154,7 +154,11 @@ def init_db(path: str | None = None) -> None:
         c.executescript(SCHEMA)
         for table, col, ddl in _MIGRATIONS:
             if col not in [r["name"] for r in c.execute(f"PRAGMA table_info({table})")]:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+                try:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+                except sqlite3.OperationalError as e:      # another session added it a moment ago
+                    if "duplicate column" not in str(e):
+                        raise
         # real estate used to store a total current value; convert it to a per-sq-ft price
         if "current_value" in [r["name"] for r in c.execute("PRAGMA table_info(real_estate)")]:
             c.execute("UPDATE real_estate SET current_per_sqft = current_value / area_sqft "

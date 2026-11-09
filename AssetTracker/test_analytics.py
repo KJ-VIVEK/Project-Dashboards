@@ -684,3 +684,18 @@ def test_deductions_on_the_inflow_row_are_subtracted_on_its_date():
     assert p.loc["Salary", 3] == 1000 and p.loc["Taxes Paid", 3] == -100
     assert val.validate("income", pd.DataFrame({"id": [1], "date": [date(2025, 3, 31)], "source": ["Salary"],
                                                 "amount": [1000.0], "tax_paid": [-5.0]}))
+
+
+def test_init_db_survives_a_column_added_by_another_session(path):
+    db.init_db(path)
+    import sqlite3
+    c = sqlite3.connect(path)
+    c.execute("ALTER TABLE income DROP COLUMN other_deductions")
+    c.commit()
+    c.close()
+    real = db._MIGRATIONS
+    db._MIGRATIONS = list(real)
+    db.init_db(path)            # adds it again
+    db.init_db(path)            # and a repeat run is harmless
+    db._MIGRATIONS = real
+    assert "other_deductions" in db.get_table("income", path).columns
