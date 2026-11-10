@@ -39,7 +39,7 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py     # ...and open the ap
 | 🏪 **Business** | Businesses and trades: invested, made, lost, running or closed. |
 | 📝 **Notes** | Simple to-dos and ideas. |
 
-The sidebar refreshes live prices, lets you override the USD→₹ rate, takes a backup and downloads the database.
+The sidebar refreshes live prices, lets you override the USD→₹ rate, takes a backup, **restores from one** and downloads the database.
 
 ### 📊 Summary
 
@@ -147,6 +147,7 @@ Expenses (left over) = Income − Invested − Saved − Insurance − Loan inte
 | Daily snapshot | On app start |
 | Before any delete, or saving the plan | Automatically |
 | **Back up now** | Sidebar button |
+| **Restore from a backup** | Sidebar: pick a snapshot and confirm. Your current data is backed up first, so nothing is lost. |
 | Off-machine copy | Set `ASSET_BACKUP_DIR` to a synced folder |
 | On push | `../push.sh` runs `backup.py` first |
 

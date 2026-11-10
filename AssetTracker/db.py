@@ -5,6 +5,7 @@ import math
 import os
 import shutil
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from datetime import date, datetime
 
@@ -402,10 +403,47 @@ def backup_if_stale(path: str | None = None, hours: int = 20) -> str | None:
     return backup(path)
 
 
-def restore(backup_file: str, path: str | None = None) -> None:
+def list_backups(path: str | None = None) -> list[dict]:
+    """The snapshots of this database, newest first: file, when it was taken and its size in bytes."""
     path = path or DB_PATH
-    backup(path)  # safety copy first
-    shutil.copyfile(backup_file, path)
+    d = os.path.join(BACKUP_DIR, os.path.splitext(os.path.basename(path))[0])
+    out = []
+    for name in sorted(os.listdir(d), reverse=True) if os.path.isdir(d) else []:
+        if not name.endswith(".db"):
+            continue
+        try:
+            taken = datetime.strptime(name[:15], "%Y%m%d-%H%M%S")
+        except ValueError:
+            continue
+        full = os.path.join(d, name)
+        out.append({"file": full, "taken": taken, "size": os.path.getsize(full)})
+    return out
+
+
+def restore(backup_file: str, path: str | None = None) -> str:
+    """Replace the live database with a snapshot. The current data is snapshotted first (returned), so a restore
+    never loses what you have now. The snapshot must be a healthy SQLite file, otherwise nothing changes."""
+    path = path or DB_PATH
+    check = sqlite3.connect(backup_file)
+    try:
+        ok = check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        check.close()
+    if not ok:
+        raise ValueError("That backup file is damaged, so nothing was restored.")
+    keep = shutil.copyfile(backup_file, os.path.join(tempfile.mkdtemp(), "restore.db"))   # backup() below may prune it
+    try:
+        safety = backup(path)
+        src, dst = sqlite3.connect(keep), sqlite3.connect(path)
+        try:
+            src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
+    finally:
+        shutil.rmtree(os.path.dirname(keep), ignore_errors=True)
+    init_db(path)     # an older snapshot may lack newer tables or columns
+    return safety
 
 
 def today() -> date:
