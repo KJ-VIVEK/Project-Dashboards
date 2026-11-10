@@ -589,6 +589,30 @@ def loan_payments(loans: pd.DataFrame, today=None) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+def invested_shares(positions: pd.DataFrame) -> pd.DataFrame:
+    """Adds invested_pct: each holding's invested amount as a % of the total invested in the whole portfolio (open
+    holdings only; a fully sold holding has nothing invested, so 0)."""
+    p = positions.copy()
+    inv = num(p["invested"]).where(num(p["qty"]) > 0, 0.0)
+    total = inv.sum()
+    p["invested_pct"] = (inv / total * 100) if total > 0 else 0.0
+    return p
+
+
+def category_summary(positions: pd.DataFrame) -> pd.DataFrame:
+    """One row per category with open holdings: holdings, invested, % of the total invested, current value, unrealised
+    P/L, and the share of the portfolio's current value. Highest invested first."""
+    p = invested_shares(positions)
+    p = p[num(p["qty"]) > 0]
+    if p.empty:
+        return pd.DataFrame(columns=["category", "holdings", "invested", "invested_pct", "value", "pnl", "pnl_pct"])
+    g = p.groupby("category").agg(holdings=("name", "size"), invested=("invested", "sum"),
+                                  invested_pct=("invested_pct", "sum"), value=("value", "sum")).reset_index()
+    g["pnl"] = g["value"] - g["invested"]
+    g["pnl_pct"] = (g["pnl"] / g["invested"].where(g["invested"] > 0) * 100)
+    return g.sort_values("invested", ascending=False, ignore_index=True)
+
+
 def active_savings(sv: pd.DataFrame) -> pd.DataFrame:
     """Savings rows that count today: an FD (or other deposit) marked temporarily closed is taken out of its category
     until it is added back, so it is left out of every total."""
