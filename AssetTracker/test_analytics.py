@@ -984,3 +984,54 @@ def test_extra_tax_column_follows_cells_typed_before_saving():
     assert inc["tax_pct"].isna().all()                                   # the saved table is untouched
     assert list(an.extra_tax_rows(inc, 0.0)) == [0.0, 0.0]
     assert an.apply_editor_edits(inc, None).equals(inc.reset_index(drop=True))
+
+
+# ---- Cash & savings: temporarily closed deposits, interest, goals, dates -----------------------------------
+def _sv(rows):
+    cols = ["kind", "name", "amount", "temp_closed", "auto_renew", "start_date", "maturity_date", "target", "interest_earned"]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def test_temporarily_closed_fd_is_subtracted_from_its_category_and_every_total():
+    sv = _sv([["FD", "A", 500000.0, False, False, date(2025, 1, 1), date(2026, 1, 1), None, None],
+              ["FD", "B", 200000.0, True, False, date(2025, 1, 1), date(2027, 1, 1), None, None],     # closed for now
+              ["Savings Account", "S", 1000.0, False, False, None, None, None, None]])
+    assert list(an.active_savings(sv)["name"]) == ["A", "S"]
+    assert an.temporarily_closed(sv)["amount"].sum() == 200000
+    t = an.savings_totals(sv).set_index("kind")["amount"]
+    assert t["FD"] == 500000 and t["Savings Account"] == 1000          # B is not in the FD category now
+    flow = an.money_flow(0.0, {}, pd.DataFrame(columns=["date", "invested"]),
+                         pd.DataFrame(columns=["purchase_date", "total_cost"]), sv)
+    assert flow["saved"] == 501000
+    sv.loc[1, "temp_closed"] = False                                    # added back later: counts again
+    assert an.savings_totals(sv).set_index("kind").loc["FD", "amount"] == 700000
+
+
+def test_savings_without_the_flag_column_still_work():
+    sv = pd.DataFrame({"kind": ["FD"], "name": ["A"], "amount": [10.0]})
+    assert an.active_savings(sv).equals(sv) and an.temporarily_closed(sv).empty
+
+
+def test_deposit_status():
+    today = date(2026, 11, 10)
+    row = lambda **k: {"kind": "FD", "temp_closed": False, "auto_renew": False, "maturity_date": date(2027, 1, 1), **k}
+    assert an.deposit_status(row(), today) == "Active"
+    assert an.deposit_status(row(maturity_date=date(2026, 1, 1)), today) == "Matured"
+    assert an.deposit_status(row(maturity_date=date(2026, 1, 1), auto_renew=True), today) == "Matured, renewed"
+    assert an.deposit_status(row(temp_closed=True), today) == "Temporarily closed"
+    assert an.deposit_status(row(maturity_date=None), today) == "Active"
+    assert an.deposit_status({"kind": "Cash in Hand", "maturity_date": None}, today) == ""
+
+
+def test_savings_validation_dates_goal_and_interest():
+    base = dict(id=1, name="X", amount=100.0, start_date=None, maturity_date=None, target=None, interest_earned=None)
+    fd = val.validate("savings", pd.DataFrame([{**base, "kind": "FD"}]))
+    assert any("FD needs a start date" in x for x in fd) and any("FD needs a maturity date" in x for x in fd)
+    ok = val.validate("savings", pd.DataFrame([{**base, "kind": "FD", "start_date": date(2025, 1, 1),
+                                                 "maturity_date": date(2026, 1, 1), "interest_earned": 50.0}]))
+    assert not ok
+    assert not val.validate("savings", pd.DataFrame([{**base, "kind": "Savings Account"}]))     # open-ended: no dates needed
+    assert any("goal needs a goal / target" in x for x in val.validate("savings", pd.DataFrame([{**base, "kind": "Short-term Goal"}])))
+    assert not val.validate("savings", pd.DataFrame([{**base, "kind": "Short-term Goal", "target": 5000.0}]))
+    assert any("Interest earned" in x for x in val.validate("savings", pd.DataFrame(
+        [{**base, "kind": "FD", "start_date": date(2025, 1, 1), "maturity_date": date(2026, 1, 1), "interest_earned": -5.0}])))

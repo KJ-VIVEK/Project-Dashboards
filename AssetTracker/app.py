@@ -256,7 +256,7 @@ positions, realised, pos_warnings = an.build_positions(securities, trades, divid
 metals_f = an.metals_frame(metals, prices)
 re_f = an.real_estate_frame(real_estate)
 loans_f = an.loans_frame(loans)
-savings_total = an.num(savings["amount"]).sum()
+savings_total = an.num(an.active_savings(savings)["amount"]).sum()   # temporarily closed FDs are out until added back
 loans_total = loans_f["outstanding"].sum()
 buckets = an.bucket_values(positions, metals_f, re_f, savings_total)
 inv_b = buckets[buckets["bucket"] != db.SAVINGS_BUCKET]
@@ -679,55 +679,106 @@ with tabs[1]:
 with tabs[2]:
     sv = savings.copy()
     sv["amount"] = an.num(sv["amount"])
+    live_sv = an.active_savings(sv)                   # an FD marked temporarily closed is out of its category for now
+    closed_sv = an.temporarily_closed(sv)
     tot = an.savings_totals(sv)
+    by_kind = lambda ks: live_sv.loc[live_sv["kind"].isin(ks), "amount"].sum()
     c = st.columns(4)
     kpi(c[0], "Total cash & savings", savings_total)
     for col, k in zip(c[1:], ["Savings Account", "FD", "EPF"]):
-        kpi(col, k, sv.loc[sv["kind"] == k, "amount"].sum())
+        kpi(col, k, by_kind([k]))
     c = st.columns(4)
-    kpi(c[0], "NPS", sv.loc[sv["kind"] == "NPS", "amount"].sum())
-    kpi(c[1], "Short-term goals", sv.loc[sv["kind"] == "Short-term Goal", "amount"].sum())
-    kpi(c[2], "PPF / RD", sv.loc[sv["kind"].isin(["PPF", "RD"]), "amount"].sum())
-    kpi(c[3], "Cash in hand", sv.loc[sv["kind"] == "Cash in Hand", "amount"].sum())
+    kpi(c[0], "NPS", by_kind(["NPS"]))
+    kpi(c[1], "Short-term goals", by_kind(["Short-term Goal"]))
+    kpi(c[2], "PPF / RD", by_kind(["PPF", "RD"]))
+    kpi(c[3], "Cash in hand", by_kind(["Cash in Hand"]))
+    if not closed_sv.empty:
+        st.info(f"**Temporarily closed: {an.inr(closed_sv['amount'].sum())}** ("
+                + ", ".join(f"{r['name']} {an.inr(r['amount'])} from {r['kind']}" for _, r in closed_sv.iterrows())
+                + "). It is taken out of its category and left out of every total until you untick *Temporarily closed* "
+                  "in the table below.", icon=":material/pause_circle:")
 
-    with st.form("add_savings", clear_on_submit=True):
-        c = st.columns([1.2, 1.6, 1.2, 2, 1], vertical_alignment="bottom")
-        kind = c[0].selectbox("Type", db.SAVINGS_KINDS)
-        name = c[1].text_input("Name", placeholder="e.g. HDFC FD #2, Honeymoon fund")
-        amt = c[2].number_input("Amount now (₹)", min_value=0.0, step=1000.0, format="%.2f")
-        purpose = c[3].text_input("What is it meant for?", placeholder="e.g. House down payment, Emergency")
-        c2 = st.columns([1, 1, 1, 1, 1], vertical_alignment="bottom")
-        rate = c2[0].number_input("Interest % (optional)", min_value=0.0, step=0.1, format="%.2f")
-        mat = dinput(c2[1], "Maturity / target date", value=None)
-        tgt = c2[2].number_input("Goal target ₹ (goals)", min_value=0.0, step=1000.0, format="%.2f")
-        if c2[4].form_submit_button("Add", width="stretch", type="primary") and not partial_dates("Maturity / target date"):
-            if name.strip():
+    kind = st.selectbox("Type", db.SAVINGS_KINDS, key="sv_kind",
+                        help="The fields below change with the type: interest for FD, RD and savings, a goal amount for goals.")
+    is_goal, is_interest, is_term = kind == "Short-term Goal", kind in db.INTEREST_KINDS, kind in db.TERM_KINDS
+    with st.form("add_savings", clear_on_submit=True, border=False):
+        c = st.columns([1.6, 1.2, 2.4], vertical_alignment="bottom")
+        name = c[0].text_input("Name", placeholder="e.g. HDFC FD #2, Honeymoon fund")
+        amt = c[1].number_input("Amount now (₹)", min_value=0.0, step=1000.0, format="%.2f")
+        purpose = c[2].text_input("What is it meant for?", placeholder="e.g. House down payment, Emergency")
+        c2 = st.columns(3, vertical_alignment="top")
+        s_start = dinput(c2[0], "Starts on", value=None, key="sv_start" + ("_req" if is_term else ""))
+        s_end = dinput(c2[1], "Ends / matures on", value=None, key="sv_end" + ("_req" if is_term else ""),
+                       help="Needed for an FD, RD or PPF." if is_term else None)
+        rate = earned = tgt = None
+        renew = closed = False
+        if is_interest:
+            c3 = st.columns(3, vertical_alignment="bottom")
+            rate = c3[0].number_input("Interest %", min_value=0.0, step=0.1, format="%.2f")
+            earned = c3[1].number_input("Interest earned (₹)", min_value=0.0, step=100.0, format="%.2f",
+                                        help="The interest earned so far.")
+        if is_goal:
+            tgt = st.number_input("Goal / target (₹)", min_value=0.0, step=1000.0, format="%.2f",
+                                  help="The amount you are saving towards. The progress bar compares it with the amount now.")
+        if is_term:
+            c4 = st.columns(2)
+            renew = c4[0].checkbox("Will be renewed after maturity", key="sv_renew")
+            closed = c4[1].checkbox("Temporarily closed (money taken out, to be added back later)", key="sv_closed",
+                                    help="It is subtracted from this category until you untick it. Use it when you plan to "
+                                         "put the same amount back later.")
+        if st.form_submit_button("Add account", type="primary") and not partial_dates("Starts on", "Ends / matures on"):
+            if not name.strip():
+                st.error("Give it a name.")
+            elif is_term and not (s_start and s_end):
+                st.error(f"An {kind} needs both a start date and an end / maturity date." if kind in ("FD", "RD") else f"A {kind} needs both a start date and an end / maturity date.")
+            elif s_start and s_end and s_end < s_start:
+                st.error("The end date is before the start date.")
+            elif is_goal and not (tgt or 0) > 0:
+                st.error("Enter the goal / target amount, above zero.")
+            else:
                 db.insert("savings", {"kind": kind, "name": name, "amount": amt, "purpose": purpose,
-                                      "interest_rate": rate or None, "maturity_date": mat, "target": tgt or None})
+                                      "interest_rate": rate or None, "interest_earned": earned or None,
+                                      "start_date": s_start, "maturity_date": s_end, "target": tgt or None,
+                                      "auto_renew": renew, "temp_closed": closed,
+                                      "closed_on": date.today() if closed else None})
                 flash("Added.")
                 st.rerun()
-            else:
-                st.error("Give it a name.")
 
-    goals = an.goal_progress(sv)
+    goals = an.goal_progress(live_sv)
     if not goals.empty:
         st.markdown("**Short-term goals**")
         for _, g in goals.iterrows():
             st.progress(g["pct"] / 100, text=f"{g['name']}: {an.inr(g['amount'])} of {an.inr(g['target'])} "
                         f"({g['pct']:.0f}%){' — by ' + str(g['maturity_date']) if g['maturity_date'] else ''}")
+    dep = sv[sv["kind"].isin(db.TERM_KINDS + ["Savings Account"])]
+    if not dep.empty:
+        st.markdown("**Deposits**")
+        dt = pd.DataFrame({"Name": dep["name"], "Type": dep["kind"], "Amount": dep["amount"].map(an.inr),
+                           "Interest %": pd.to_numeric(dep["interest_rate"], errors="coerce").map(lambda v: "–" if pd.isna(v) else f"{v:g}%"),
+                           "Interest earned": pd.to_numeric(dep["interest_earned"], errors="coerce").map(lambda v: "–" if pd.isna(v) else an.inr(v)),
+                           "Start": dep["start_date"], "End / maturity": dep["maturity_date"],
+                           "Renewed after maturity": dep["auto_renew"].map(lambda v: "Yes" if v else "No"),
+                           "Status": dep.apply(an.deposit_status, axis=1)})
+        st.dataframe(dt, hide_index=True, width="stretch")
     if not tot.empty:
         fig = go.Figure(go.Bar(x=tot["kind"], y=tot["amount"], marker_color=REAL))
         fig.update_yaxes(tickprefix="₹", tickformat="~s")
-        show(style(fig, "Cash & savings by type", height=280))
+        show(style(fig, "Cash & savings by type (temporarily closed money not counted)", height=280))
     st.markdown("**All accounts**")
     edit_table("savings", savings, savings, {
         "kind": st.column_config.SelectboxColumn("Type", options=db.SAVINGS_KINDS, required=True),
         "name": st.column_config.TextColumn("Name", required=True),
         "amount": money_cfg("Amount (₹)", required=True), "purpose": "Meant for",
         "interest_rate": st.column_config.NumberColumn("Interest %", min_value=0, format="%.2f"),
-        "start_date": dcol("Start"),
-        "maturity_date": dcol("Maturity / target"),
-        "target": money_cfg("Goal target (₹)"), "note": "Note"}, ("kind", "name", "amount"), "savings")
+        "interest_earned": money_cfg("Interest earned (₹)", help="FD, RD and savings: interest earned so far."),
+        "start_date": dcol("Start date"),
+        "maturity_date": dcol("End / maturity date"),
+        "auto_renew": st.column_config.CheckboxColumn("Renewed after maturity"),
+        "temp_closed": st.column_config.CheckboxColumn(
+            "Temporarily closed", help="Taken out of its category and left out of every total until you untick it."),
+        "closed_on": dcol("Closed on"),
+        "target": money_cfg("Goal / target (₹)", help="Goals: the amount you are saving towards."),
+        "note": "Note"}, ("kind", "name", "amount"), "savings")
 
 # ================================================================== 4. INSURANCE
 with tabs[3]:
