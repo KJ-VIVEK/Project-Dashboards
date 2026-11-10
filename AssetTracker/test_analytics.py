@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 from datetime import date
 
@@ -1194,3 +1195,38 @@ def test_epf_and_nps_count_as_investment_not_saving():
     assert f["expense"] == 10000 - 2700 - 1200
     a = an.main_actuals({**f, "business": 0.0, "loans": 0.0, "insurance": 0.0})
     assert a["Savings"] == 1200 and a["Investment"] == 2000 + 0 + 700
+
+
+def test_restore_brings_back_a_snapshot_and_keeps_what_you_had(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "BACKUP_DIR", str(tmp_path / "bk"))
+    db.insert("notes", {"title": "kept", "kind": "Todo", "done": False}, path)
+    snap = db.backup(path)
+    db.insert("notes", {"title": "added later", "kind": "Todo", "done": False}, path)
+    assert [b["file"] for b in db.list_backups(path)] == [snap]
+    safety = db.restore(snap, path)
+    assert list(db.get_table("notes", path)["title"]) == ["kept"]          # back to the snapshot
+    saved = sqlite3.connect(safety)
+    assert [r[0] for r in saved.execute("SELECT title FROM notes ORDER BY id")] == ["kept", "added later"]
+    saved.close()
+    assert not any(f.endswith(".restoring") for f in os.listdir(os.path.dirname(snap)))
+
+
+def test_restoring_the_oldest_snapshot_survives_pruning(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "BACKUP_DIR", str(tmp_path / "bk"))
+    snap = db.backup(path)
+    for _ in range(30):                                  # the folder is full: the next backup prunes the oldest
+        db.backup(path, keep=30)
+    oldest = db.list_backups(path)[-1]["file"]
+    db.insert("notes", {"title": "x", "kind": "Todo", "done": False}, path)
+    db.restore(oldest, path)                             # must not fail because the safety copy pruned it
+    assert db.get_table("notes", path).empty
+
+
+def test_restore_refuses_a_damaged_file(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "BACKUP_DIR", str(tmp_path / "bk"))
+    bad = tmp_path / "bad.db"
+    bad.write_bytes(b"not a database at all" * 50)
+    db.insert("notes", {"title": "safe", "kind": "Todo", "done": False}, path)
+    with pytest.raises(Exception):
+        db.restore(str(bad), path)
+    assert list(db.get_table("notes", path)["title"]) == ["safe"]

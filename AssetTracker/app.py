@@ -1,4 +1,5 @@
 """Asset Tracker Dashboard.  Run: streamlit run app.py"""
+import os
 from datetime import date, datetime
 
 import pandas as pd
@@ -285,6 +286,37 @@ with st.sidebar:
     with open(db.DB_PATH, "rb") as f:
         st.download_button("Download database", f.read(), file_name=f"assets-{date.today()}.db",
                            icon=":material/download:", width="stretch")
+    with st.expander("Restore from a backup", icon=":material/restore:"):
+        snaps = db.list_backups()
+        if not snaps:
+            st.caption("No backups yet. Press Back up now to make one.")
+        else:
+            snap = st.selectbox("Backup", snaps, key="restore_pick", format_func=lambda s: (
+                f"{s['taken']:%d %b %Y, %H:%M:%S} · {s['size'] / 1024:,.0f} KB"))
+            st.caption("Replaces everything with that backup. Your current data is backed up first.")
+            if not st.session_state.get("_restore_confirm") == snap["file"]:
+                if st.button("Restore this backup", key="restore_go", width="stretch"):
+                    st.session_state["_restore_confirm"] = snap["file"]
+                    st.rerun()
+            else:
+                st.warning(f"Restore the backup from {snap['taken']:%d %b %Y, %H:%M}? Anything added since then "
+                           "will be gone (it stays in the safety copy).")
+                yes, no = st.columns(2)
+                if yes.button("Yes, restore", key="restore_yes", type="primary", width="stretch"):
+                    st.session_state.pop("_restore_confirm", None)
+                    try:
+                        safety = db.restore(snap["file"])
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        st.cache_data.clear()
+                        for k in [k for k in st.session_state if k.startswith(("ed_", "_pending_delete_"))]:
+                            del st.session_state[k]
+                        flash(f"Restored. What you had before is saved as {os.path.basename(safety)}.")
+                        st.rerun()
+                if no.button("Cancel", key="restore_no", width="stretch"):
+                    st.session_state.pop("_restore_confirm", None)
+                    st.rerun()
     st.caption("All amounts are in ₹. USD holdings are converted at the live rate.")
 
 st.title("Asset Tracker")
