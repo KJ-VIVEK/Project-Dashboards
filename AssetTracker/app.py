@@ -351,8 +351,8 @@ with tabs[0]:
                          metals_f, re_f, savings, yr, prem_paid if prem_on else None, loan_paid if loans_on else None, business)
     c = st.columns(6)
     kpi(c[0], "Income", flow["income"])
-    kpi(c[1], "Invested", flow["invested"], help="New money put into stocks/funds, gold & silver, property and businesses")
-    kpi(c[2], "Saved", flow["saved"], help="Cash, FD, EPF, NPS and goal balances" + (
+    kpi(c[1], "Invested", flow["invested"], help="New money put into stocks/funds, gold & silver, property, businesses, and EPF and NPS (which are invested in funds)")
+    kpi(c[2], "Saved", flow["saved"], help="Cash, FD, RD, PPF and goal balances (EPF and NPS count as invested)" + (
         "; for a single year, only entries with a start date in it" if yr else ""))
     kpi(c[3], "Insurance", flow["insurance"], help="Premiums actually paid in the period (Insurance tab)")
     kpi(c[4], "Loan interest & charges", flow["loans"], help="Interest and other charges paid on loans in the period (Loans tab). Not the loan amount or the down payment")
@@ -366,14 +366,14 @@ with tabs[0]:
                    "Add the missing income on the Source tab, or pick 'All time'.")
     if flow["income"] > 0:
         labels = ["Income", "Investments", "Saved", "Insurance", "Loans", "Expenses", "Stocks & funds", "Gold & silver",
-                  "Real estate", "Business"]
+                  "Real estate", "Business", "EPF & NPS"]
         links = [(0, 1, flow["invested"]), (0, 2, flow["saved"]), (0, 3, flow["insurance"]), (0, 4, flow["loans"]),
                  (0, 5, max(flow["expense"], 0)),
-                 (1, 6, flow["stocks"]), (1, 7, flow["metals"]), (1, 8, flow["real_estate"]), (1, 9, flow["business"])]
+                 (1, 6, flow["stocks"]), (1, 7, flow["metals"]), (1, 8, flow["real_estate"]), (1, 9, flow["business"]), (1, 10, flow["pf"])]
         links = [l for l in links if l[2] > 0]
         fig = go.Figure(go.Sankey(
             node=dict(label=labels, pad=18, thickness=14, color=[REAL, "#6250d6", "#1baf7a", "#c2185b", "#d6403a",
-                                                                  "#eb6834", "#a396ea", "#eda100", "#8c5a3c", "#2f8f9d"]),
+                                                                  "#eb6834", "#a396ea", "#eda100", "#8c5a3c", "#2f8f9d", "#5b6abf"]),
             link=dict(source=[l[0] for l in links], target=[l[1] for l in links], value=[l[2] for l in links],
                       color="rgba(137,135,129,0.25)")))
         show(style(fig, "Income → investments, savings, insurance, loans and expenses", height=340))

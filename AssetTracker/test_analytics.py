@@ -1127,7 +1127,7 @@ def test_plan_targets_feed_the_ideal_vs_reality_buckets():
 
 def test_plan_actuals_per_main_category():
     flow = {"saved": 100.0, "stocks": 300.0, "metals": 50.0, "real_estate": 70.0, "loans": 40.0, "expense": 200.0,
-            "insurance": 25.0, "business": 60.0}
+            "insurance": 25.0, "business": 60.0, "pf": 0.0}
     a = an.main_actuals(flow)
     assert a["Savings"] == 100 and a["Investment"] == 350 and a["Real-Estate"] == 70 and a["EMI"] == 40
     assert a["Expenses & Leisure"] == 225 and a["Business & Trading"] == 60
@@ -1207,3 +1207,15 @@ def test_business_validation():
     text = " ".join(val.validate("business", bad, ("name", "invested")))
     assert "needs the date it was closed" in text and "cannot be negative" in text and "must be above 0" in text
     assert "is before" in text
+
+
+def test_epf_and_nps_count_as_investment_not_saving():
+    none_m = pd.DataFrame(columns=["date", "invested"])
+    none_r = pd.DataFrame(columns=["purchase_date", "total_cost"])
+    sv = pd.DataFrame({"kind": ["FD", "EPF", "NPS", "Savings Account"], "name": list("ABCD"),
+                       "amount": [1000.0, 400.0, 300.0, 200.0], "start_date": [date(2025, 1, 1)] * 4})
+    f = an.money_flow(10000, {"all": 2000.0}, none_m, none_r, sv, None)
+    assert f["saved"] == 1200 and f["pf"] == 700 and f["invested"] == 2700
+    assert f["expense"] == 10000 - 2700 - 1200
+    a = an.main_actuals({**f, "business": 0.0, "loans": 0.0, "insurance": 0.0})
+    assert a["Savings"] == 1200 and a["Investment"] == 2000 + 0 + 700
