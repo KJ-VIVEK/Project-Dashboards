@@ -25,8 +25,9 @@ LABELS = {
     "purity": "Purity", "grams": "Grams", "rate_per_g": "Rate per gram", "making_charges": "Making charges",
     "gst": "GST", "cost": "Cost", "area_sqft": "Area", "registration": "Registration", "brokerage": "Brokerage",
     "monthly_rent": "Rent per month", "current_per_sqft": "Current price per sq ft", "purchase_date": "Purchased on",
-    "maturity_date": "Maturity date", "target": "Goal target", "title": "Title", "description": "Description",
-    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF or NPS or Vouchers or Insurance", "tax_pct": "Extra tax %", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
+    "maturity_date": "Maturity date", "target": "Goal / target", "title": "Title", "description": "Description",
+    "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF or NPS or Vouchers or Insurance", "tax_pct": "Extra tax %", "interest_earned": "Interest earned", "auto_renew": "Renewed after maturity",
+    "temp_closed": "Temporarily closed", "closed_on": "Closed on", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
     "rsu_sell_price": "Sell price", "rsu_sell_date": "Sell date", "rsu_sell_fx": "USD to INR on the sell date",
 }
 
@@ -37,6 +38,7 @@ RULES: dict[str, dict[str, tuple]] = {
                "rsu_sold_qty": (">=", 0), "rsu_sell_price": (">=", 0), "rsu_sell_fx": (">=", 0),
                "tax_pct": ("between", 0, 100)},
     "savings": {"kind": ("in", db.SAVINGS_KINDS), "amount": (">=", 0), "interest_rate": ("between", 0, 100),
+                "interest_earned": (">=", 0),
                 "target": (">=", 0)},
     "insurance": {"premium": (">", 0), "sum_assured": (">=", 0), "frequency": ("in", db.FREQUENCY_OPTIONS),
                   "insured_for": ("in", db.INSURED_FOR), "type": ("in", db.INSURANCE_TYPES)},
@@ -131,6 +133,12 @@ def validate(table: str, df: pd.DataFrame, required=()) -> list[str]:
                 bad(f"{_label(col)} cannot be negative (got {_shown(n)}).")
             elif kind == "between" and not rule[1] <= n <= rule[2]:
                 bad(f"{_label(col)} must be between {_shown(rule[1])} and {_shown(rule[2])} (got {_shown(n)}).")
+        if table == "savings" and row.get("kind") in db.TERM_KINDS:        # a deposit always has a start and an end date
+            for col in ("start_date", "maturity_date"):
+                if _blank(row.get(col)):
+                    bad(f"{'An' if row.get('kind') in ('FD', 'RD') else 'A'} {row.get('kind')} needs a {_label(col).lower()}.")
+        if table == "savings" and row.get("kind") == "Short-term Goal" and not (_num(row.get("target")) or 0) > 0:
+            bad("A goal needs a goal / target amount above 0.")
         if table == "income" and not _blank(row.get("rsu_sold_qty")) and (_num(row.get("rsu_sold_qty")) or 0) > 0:
             if (_num(row.get("rsu_sold_qty")) or 0) > (_num(row.get("rsu_qty")) or 0):
                 bad("Shares sold for tax cannot be more than the shares vested.")

@@ -36,6 +36,9 @@ DEFAULT_PREMIUM = {"Gold": 6.0, "Silver": 6.0}
 SAVINGS_BUCKET = "Cash & Savings"
 INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
+# kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
+INTEREST_KINDS = ["FD", "RD", "Savings Account"]
+TERM_KINDS = ["FD", "RD", "PPF"]
 SAVINGS_KINDS = ["Savings Account", "Cash in Hand", "FD", "RD", "EPF", "NPS", "PPF", "Short-term Goal"]
 INSURED_FOR = ["Me", "Family", "Own Damage (OD)", "Third Party (TP)", "Other"]   # who or what a policy covers
 INSURANCE_TYPES = ["Term Life", "Health", "Life/Endowment", "Vehicle", "Home", "Travel", "Other"]
@@ -69,7 +72,8 @@ CREATE TABLE IF NOT EXISTS dividends (
 CREATE TABLE IF NOT EXISTS savings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL, name TEXT NOT NULL, amount REAL NOT NULL, purpose TEXT,
-    interest_rate REAL, start_date TEXT, maturity_date TEXT, target REAL, note TEXT);
+    interest_rate REAL, start_date TEXT, maturity_date TEXT, target REAL, note TEXT,
+    interest_earned REAL, auto_renew INTEGER DEFAULT 0, temp_closed INTEGER DEFAULT 0, closed_on TEXT);
 CREATE TABLE IF NOT EXISTS insurance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL, type TEXT, provider TEXT, policy_no TEXT, sum_assured REAL,
@@ -110,8 +114,9 @@ TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
                    {"price_date"}, set()),
     "trades": (["security_id", "date", "side", "qty", "price", "fees", "note", "fx_rate"], {"date"}, set()),
     "dividends": (["security_id", "date", "amount", "note"], {"date"}, set()),
-    "savings": (["kind", "name", "amount", "purpose", "interest_rate", "start_date", "maturity_date", "target", "note"],
-                {"start_date", "maturity_date"}, set()),
+    "savings": (["kind", "name", "amount", "purpose", "interest_rate", "start_date", "maturity_date", "target", "note",
+                 "interest_earned", "auto_renew", "temp_closed", "closed_on"],
+                {"start_date", "maturity_date", "closed_on"}, {"auto_renew", "temp_closed"}),
     "insurance": (["name", "type", "provider", "policy_no", "sum_assured", "premium", "frequency", "next_due",
                    "link", "notes", "active", "start_date", "end_date", "insured_for"],
                   {"next_due", "start_date", "end_date"}, {"active"}),
@@ -158,7 +163,9 @@ _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_
                ("income", "rsu_qty", "REAL"), ("income", "rsu_buy_price", "REAL"),
                ("income", "rsu_sold_qty", "REAL"), ("income", "rsu_sell_price", "REAL"),
                ("income", "rsu_sell_date", "TEXT"), ("income", "rsu_sell_fx", "REAL"),
-               ("income", "tax_pct", "REAL")]
+               ("income", "tax_pct", "REAL"),
+               ("savings", "interest_earned", "REAL"), ("savings", "auto_renew", "INTEGER DEFAULT 0"),
+               ("savings", "temp_closed", "INTEGER DEFAULT 0"), ("savings", "closed_on", "TEXT")]
 
 
 def init_db(path: str | None = None) -> None:

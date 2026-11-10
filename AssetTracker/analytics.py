@@ -543,8 +543,37 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     return l
 
 
+def active_savings(sv: pd.DataFrame) -> pd.DataFrame:
+    """Savings rows that count today: an FD (or other deposit) marked temporarily closed is taken out of its category
+    until it is added back, so it is left out of every total."""
+    if "temp_closed" not in sv:
+        return sv
+    return sv[~sv["temp_closed"].fillna(False).astype(bool)]
+
+
+def temporarily_closed(sv: pd.DataFrame) -> pd.DataFrame:
+    """The rows marked temporarily closed (money that is out of its category for now and meant to go back)."""
+    if "temp_closed" not in sv:
+        return sv.iloc[0:0]
+    return sv[sv["temp_closed"].fillna(False).astype(bool)]
+
+
+def deposit_status(row, today=None) -> str:
+    """Status of a deposit: Temporarily closed, Matured (renewed / not renewed), Active, or '' for open-ended money."""
+    from datetime import date as _date
+    today = today or _date.today()
+    if bool(row.get("temp_closed")):
+        return "Temporarily closed"
+    mat = row.get("maturity_date")
+    if mat is None or pd.isna(mat) or not hasattr(mat, "year"):
+        return "Active" if row.get("kind") in db.TERM_KINDS else ""
+    if mat < today:
+        return "Matured, renewed" if bool(row.get("auto_renew")) else "Matured"
+    return "Active"
+
+
 def savings_totals(sv: pd.DataFrame) -> pd.DataFrame:
-    s = sv.copy()
+    s = active_savings(sv).copy()
     s["amount"] = num(s["amount"])
     return s.groupby("kind", as_index=False)["amount"].sum().sort_values("amount", ascending=False)
 
@@ -607,7 +636,7 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
 
     m = metals[in_year(metals["date"])]["invested"].sum() if len(metals) else 0.0
     r = real_estate[in_year(real_estate["purchase_date"])]["total_cost"].sum() if len(real_estate) else 0.0
-    sv = savings
+    sv = active_savings(savings)      # a temporarily closed FD is not counted until it is added back
     if year is not None and len(sv):
         sv = sv[in_year(sv["start_date"])]
     saved = float(num(sv["amount"]).sum()) if len(sv) else 0.0
