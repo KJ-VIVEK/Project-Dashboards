@@ -1281,30 +1281,61 @@ with tabs[5]:
 
     cats = st.multiselect("Category", db.SECURITY_CATEGORIES, key="stk_cats", placeholder="All categories")
     show_closed = st.toggle("Show fully sold holdings", key="stk_closed")
-    view = positions if show_closed else open_pos
+    shares = an.invested_shares(positions)           # adds invested_pct: invested in X / total portfolio investment
+    cat_sum = an.category_summary(positions)
+    view = shares if show_closed else shares[shares["qty"] > 0]
     if cats:
         view = view[view["category"].isin(cats)]
+        cat_sum = cat_sum[cat_sum["category"].isin(cats)]
+    holding_cfg = {
+        "name": "Holding", "currency": "Ccy",
+        "price_date": dcol("Price as of"), "qty": st.column_config.NumberColumn("Units", format="%.4g"),
+        "avg_price": st.column_config.NumberColumn("Avg buy price", format="%.2f", help="In the holding's own currency"),
+        "first_buy": dcol("First bought"),
+        "last_buy": dcol("Last bought"),
+        "invested": st.column_config.NumberColumn("Invested (₹)", format="₹%.0f"),
+        "invested_pct": st.column_config.ProgressColumn(
+            "% of invested", format="%.1f%%", min_value=0, max_value=100,
+            help="Invested in this holding ÷ total invested in the whole portfolio"),
+        "current_price": st.column_config.NumberColumn("Price now", format="%.2f", help="In the holding's own currency"),
+        "value": st.column_config.NumberColumn("Current value (₹)", format="₹%.0f"),
+        "pnl": st.column_config.NumberColumn("Unrealised P/L (₹)", format="₹%.0f"),
+        "pnl_pct": st.column_config.NumberColumn("P/L %", format="%.1f%%"),
+        "weight_pct": st.column_config.ProgressColumn("% of current value", format="%.1f%%", min_value=0, max_value=100),
+        "dividends": st.column_config.NumberColumn("Dividends", format="₹%.0f"),
+        "last_dividend": dcol("Last dividend"),
+        "realised": st.column_config.NumberColumn("Realised P/L", format="₹%.0f"),
+        "reason": st.column_config.TextColumn("Why I hold it", width="large")}
     if view.empty:
         st.info("No holdings to show yet. Use Add holding above.")
     else:
-        t = view[["name", "category", "currency", "qty", "avg_price", "first_buy", "last_buy", "invested",
-                  "current_price", "price_date", "value", "pnl", "pnl_pct", "weight_pct", "dividends", "last_dividend", "realised", "reason"]]
-        st.dataframe(t, hide_index=True, width="stretch", column_config={
-            "name": "Holding", "category": "Category", "currency": "Ccy",
-            "price_date": dcol("Price as of"), "qty": st.column_config.NumberColumn("Units", format="%.4g"),
-            "avg_price": st.column_config.NumberColumn("Avg buy price", format="%.2f", help="In the holding's own currency"),
-            "first_buy": dcol("First bought"),
-            "last_buy": dcol("Last bought"),
-            "invested": st.column_config.NumberColumn("Invested (₹)", format="₹%.0f"),
-            "current_price": st.column_config.NumberColumn("Price now", format="%.2f", help="In the holding's own currency"),
-            "value": st.column_config.NumberColumn("Current value (₹)", format="₹%.0f"),
-            "pnl": st.column_config.NumberColumn("Unrealised P/L (₹)", format="₹%.0f"),
-            "pnl_pct": st.column_config.NumberColumn("P/L %", format="%.1f%%"),
-            "weight_pct": st.column_config.ProgressColumn("% of portfolio", format="%.1f%%", min_value=0, max_value=100),
-            "dividends": st.column_config.NumberColumn("Dividends", format="₹%.0f"),
-            "last_dividend": dcol("Last dividend"),
-            "realised": st.column_config.NumberColumn("Realised P/L", format="₹%.0f"),
-            "reason": st.column_config.TextColumn("Why I hold it", width="large")})
+        total_inv = float(shares.loc[shares["qty"] > 0, "invested"].sum())
+        st.markdown("##### Holdings by category")
+        st.caption(f"Categories and holdings are listed from the most invested to the least. "
+                   f"**% of invested = invested in it ÷ total portfolio investment ({an.inr(total_inv)}).**")
+        if not cat_sum.empty:
+            cs = pd.DataFrame({"Category": cat_sum["category"], "Holdings": cat_sum["holdings"],
+                               "Invested (₹)": cat_sum["invested"], "% of invested": cat_sum["invested_pct"],
+                               "Current value (₹)": cat_sum["value"], "Unrealised P/L (₹)": cat_sum["pnl"],
+                               "P/L %": cat_sum["pnl_pct"]})
+            st.dataframe(cs, hide_index=True, width="stretch", column_config={
+                "Invested (₹)": st.column_config.NumberColumn(format="₹%.0f"),
+                "% of invested": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                "Current value (₹)": st.column_config.NumberColumn(format="₹%.0f"),
+                "Unrealised P/L (₹)": st.column_config.NumberColumn(format="₹%.0f"),
+                "P/L %": st.column_config.NumberColumn(format="%.1f%%")})
+        order = list(cat_sum["category"]) + [c_ for c_ in view["category"].unique() if c_ not in set(cat_sum["category"])]
+        for cat in order:
+            part = view[view["category"] == cat].sort_values("invested", ascending=False)
+            if part.empty:
+                continue
+            inv_c = float(part["invested"].sum())
+            st.markdown(f"**{cat}** · invested {an.inr(inv_c)} · {inv_c / total_inv * 100 if total_inv else 0:.1f}% of the "
+                        f"portfolio's investment")
+            t = part[["name", "currency", "qty", "avg_price", "first_buy", "last_buy", "invested", "invested_pct",
+                      "current_price", "price_date", "value", "pnl", "pnl_pct", "weight_pct", "dividends",
+                      "last_dividend", "realised", "reason"]]
+            st.dataframe(t, hide_index=True, width="stretch", column_config=holding_cfg)
 
     left, right = st.columns(2)
     with left:

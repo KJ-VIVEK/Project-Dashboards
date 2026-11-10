@@ -1072,3 +1072,22 @@ def test_money_flow_takes_insurance_and_loans_out_of_expenses():
     assert allt["insurance"] == 700 and allt["loans"] == 1700 and allt["expense"] == 10000 - 2000 - 1000 - 700 - 1700
     off = an.money_flow(10000, {"all": 2000.0}, none_m, none_r, sv, None)         # switched off: nothing taken out
     assert off["insurance"] == 0 and off["loans"] == 0 and off["expense"] == 7000
+
+
+def test_invested_share_and_category_summary_sorted_highest_first():
+    pos = pd.DataFrame({"name": ["A", "B", "C", "D", "Sold"], "category": ["ETFs", "Index Funds", "ETFs", "Crypto", "ETFs"],
+                        "qty": [1.0, 1.0, 1.0, 1.0, 0.0], "invested": [200.0, 500.0, 100.0, 200.0, 0.0],
+                        "value": [250.0, 450.0, 100.0, 300.0, 0.0]})
+    s = an.invested_shares(pos)
+    assert list(s["invested_pct"].round(6)) == [20.0, 50.0, 10.0, 20.0, 0.0]          # each / the 1,000 total
+    assert round(s["invested_pct"].sum(), 6) == 100
+    c = an.category_summary(pos)
+    assert list(c["category"]) == ["Index Funds", "ETFs", "Crypto"]          # 500, 300, 200
+    assert c.loc[c["category"] == "ETFs", "invested"].iloc[0] == 300 and c.loc[c["category"] == "ETFs", "holdings"].iloc[0] == 2
+    assert c.loc[c["category"] == "ETFs", "invested_pct"].iloc[0] == 30.0
+    assert list(c["invested"]) == sorted(c["invested"], reverse=True)
+    assert round(c["invested_pct"].sum(), 6) == 100
+    assert c.loc[c["category"] == "Crypto", "pnl"].iloc[0] == 100 and c.loc[c["category"] == "Crypto", "pnl_pct"].iloc[0] == 50
+    assert an.category_summary(pos.iloc[0:0]).empty
+    empty = an.invested_shares(pos.assign(qty=0.0))
+    assert (empty["invested_pct"] == 0).all()
