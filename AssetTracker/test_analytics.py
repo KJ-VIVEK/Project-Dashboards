@@ -1138,16 +1138,16 @@ def test_plan_validation():
     assert any("add up to 110% of income" in x for x in over)
     bad_sub = val.validate_targets({"Investment": 40.0}, _subs([["Investment", "Gold", 70.0], ["Investment", "ETFs", 40.0]]))
     assert any("add up to 110% of Investment" in x for x in bad_sub)
-    msgs = val.validate_targets({}, _subs([["Investment", "Gold", 10.0], ["Investment", "gold", 10.0], ["Expenses & Leisure", "", 5.0],
-                                          [None, "x", 5.0], ["EMI", "Good", -5.0]]))
+    msgs = val.validate_targets({}, _subs([["Investment", "Gold", 10.0], ["Investment", "gold", 10.0], ["Investment", "", 5.0],
+                                          [None, "x", 5.0], ["Investment", "Bonds", -5.0], ["EMI", "Good", 5.0]]))
     text = " ".join(msgs)
-    assert "repeats row 1" in text and "needs a name" in text and "choose a main category" in text and "between 0 and 100" in text
+    assert "repeats row 1" in text and "needs a name" in text and "only Investment can be divided further" in text and "between 0 and 100" in text
 
 
 def test_plan_is_stored_and_replaced(path):
     db.init_db(path)
     db.set_targets({"Savings": 20.0, "Investment": 0.0, "Bogus": 10.0},
-                   _subs([["Investment", "Gold", 50.0], ["Investment", " ", 10.0], ["Nope", "x", 5.0], ["Expenses & Leisure", "Travel", 0.0]]), path)
+                   _subs([["Investment", "Gold", 50.0], ["Investment", " ", 10.0], ["Nope", "x", 5.0], ["Savings", "FD", 50.0]]), path)
     assert db.get_target_main(path) == {"Savings": 20.0}                       # zeros, blanks and unknown rows are dropped
     assert db.get_target_sub(path)[["category", "sub", "pct"]].values.tolist() == [["Investment", "Gold", 50.0]]
     db.set_targets({"Expenses & Leisure": 30.0}, _subs([]), path)                         # saving again replaces everything

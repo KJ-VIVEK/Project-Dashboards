@@ -200,8 +200,8 @@ def validate_targets(main: dict, subs: pd.DataFrame) -> list[str]:
         cat, sub, pct = r.get("category"), r.get("sub"), r.get("pct")
         if _blank(cat) and _blank(sub) and _blank(pct):
             continue
-        if cat not in db.MAIN_CATEGORIES:
-            errors.append(f"Row {pos}: choose a main category.")
+        if cat not in db.SUB_CATEGORIES:
+            errors.append(f"Row {pos}: only {', '.join(db.SUB_CATEGORIES)} can be divided further.")
             continue
         if _blank(sub):
             errors.append(f"Row {pos} ({cat}): the sub-category needs a name.")

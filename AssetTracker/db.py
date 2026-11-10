@@ -37,16 +37,15 @@ SAVINGS_BUCKET = "Cash & Savings"
 # the ideal plan: income is first split into these main categories, each of which can be divided further
 MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Trading", "EMI", "Expenses & Leisure"]
 INVESTMENT_PLAN_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver"]
+SUB_CATEGORIES = ["Investment"]   # only these can be divided further; the rest are a single % of income
 SUB_SUGGESTIONS = {   # starting points for the second table; the user can rename, delete and add rows
-    "Savings": None, "Investment": INVESTMENT_PLAN_BUCKETS, "Real-Estate": ["Real Estate"], "Trading": [],
-    "EMI": ["Good", "Bad", "Worst"], "Expenses & Leisure": []}
+    "Investment": INVESTMENT_PLAN_BUCKETS}
 INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
 # kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
 INTEREST_KINDS = ["FD", "RD", "Savings Account"]
 TERM_KINDS = ["FD", "RD", "PPF"]
 SAVINGS_KINDS = ["Savings Account", "Cash in Hand", "FD", "RD", "EPF", "NPS", "PPF", "Short-term Goal"]
-SUB_SUGGESTIONS["Savings"] = list(SAVINGS_KINDS)
 INSURED_FOR = ["Me", "Family", "Own Damage (OD)", "Third Party (TP)", "Other"]   # who or what a policy covers
 INSURANCE_TYPES = ["Term Life", "Health", "Life/Endowment", "Vehicle", "Home", "Travel", "Other"]
 FREQUENCIES = {"Monthly": 12, "Quarterly": 4, "Half-Yearly": 2, "Yearly": 1}
@@ -351,7 +350,7 @@ def set_targets(main: dict[str, float], subs: pd.DataFrame, path: str | None = N
                 c.execute("INSERT INTO target_main(category, pct) VALUES (?,?)", (cat, min(float(pct), 100.0)))
         c.execute("DELETE FROM target_sub")
         for _, r in subs.iterrows():
-            if r["category"] in MAIN_CATEGORIES and str(r["sub"]).strip() and float(r["pct"] or 0) > 0:
+            if r["category"] in SUB_CATEGORIES and str(r["sub"]).strip() and float(r["pct"] or 0) > 0:
                 c.execute("INSERT INTO target_sub(category, sub, pct) VALUES (?,?,?)",
                           (r["category"], str(r["sub"]).strip(), min(float(r["pct"]), 100.0)))
 
