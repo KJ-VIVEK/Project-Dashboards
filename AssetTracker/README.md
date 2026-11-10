@@ -54,7 +54,8 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
 - **Ideal** per category = income (for the selected period) × the % from that plan. The unallocated % is not planned.
 - **Expenses = Income − Investments − Savings − Insurance − Loans.** Insurance is the premiums actually paid in the period; Loans is what borrowing cost: the interest paid and other charges, not the loan amount or the down payment (interest dates are worked out from the totals on the Loans tab). Each can be switched off on the Summary.
   Investments are new money put into stocks/funds (buys minus the cost
-  of units sold), gold/silver, property and businesses (including charges), by purchase date. Savings are cash, FD, EPF, NPS and
+  of units sold), gold/silver, property and businesses (including charges), by purchase date, plus EPF and NPS (they are invested in
+  funds, so they count as investments even though you enter them under Cash & Savings). Savings are cash, FD, RD, PPF and
   goal balances; for a single year only entries with a *start date* in that year are attributed to it, so use
   "All time" if you do not fill start dates.
 - **Net worth** = investments (current value) + cash & savings − loans outstanding.

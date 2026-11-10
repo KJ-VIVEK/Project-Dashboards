@@ -47,6 +47,8 @@ CURRENCIES = ["INR", "USD"]
 # kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
 INTEREST_KINDS = ["FD", "RD", "Savings Account"]
 TERM_KINDS = ["FD", "RD", "PPF"]
+# held in Cash & Savings, but the money is invested (in mutual funds), so the Summary counts it as Investment
+PF_KINDS = ["EPF", "NPS"]
 SAVINGS_KINDS = ["Savings Account", "Cash in Hand", "FD", "RD", "EPF", "NPS", "PPF", "Short-term Goal"]
 INSURED_FOR = ["Me", "Family", "Own Damage (OD)", "Third Party (TP)", "Other"]   # who or what a policy covers
 INSURANCE_TYPES = ["Term Life", "Health", "Life/Endowment", "Vehicle", "Home", "Travel", "Other"]

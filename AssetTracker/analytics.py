@@ -744,7 +744,7 @@ def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
 def main_actuals(flow: dict) -> dict[str, float | None]:
     """What really went into each main category in the period, from money_flow. Business & Trading is the money put into the
     businesses on the Business tab; Expenses includes insurance premiums and leisure (they are not tracked apart)."""
-    return {"Savings": flow["saved"], "Investment": flow["stocks"] + flow["metals"], "Real-Estate": flow["real_estate"],
+    return {"Savings": flow["saved"], "Investment": flow["stocks"] + flow["metals"] + flow["pf"], "Real-Estate": flow["real_estate"],
             "Business & Trading": flow["business"], "EMI": flow["loans"], "Expenses & Leisure": flow["expense"] + flow["insurance"]}
 
 
@@ -778,7 +778,8 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
 
     Investments = new money put into assets in the period: cost of stock/fund buys minus the cost basis of units
     sold (so recycled capital is not counted twice; profit from sells is already in income), gold/silver bought
-    (incl. charges) and property bought (incl. charges), by purchase date. Savings = cash/FD/EPF/NPS/goal balances;
+    (incl. charges) and property bought (incl. charges), by purchase date. Savings = cash/FD/RD/PPF/goal balances;
+    EPF and NPS are invested into funds, so they count as Investments (they are still entered under Cash & Savings);
     for a single year only those with a start date in that year can be attributed to it.
     """
     def in_year(series):
@@ -790,13 +791,15 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
     sv = active_savings(savings)      # a temporarily closed FD is not counted until it is added back
     if year is not None and len(sv):
         sv = sv[in_year(sv["start_date"])]
-    saved = float(num(sv["amount"]).sum()) if len(sv) else 0.0
+    pf_mask = sv["kind"].isin(db.PF_KINDS) if "kind" in sv else pd.Series(False, index=sv.index)
+    pf = float(num(sv.loc[pf_mask, "amount"]).sum()) if len(sv) else 0.0        # EPF / NPS: invested, not saved
+    saved = float(num(sv.loc[~pf_mask, "amount"]).sum()) if len(sv) else 0.0
     stocks = float(trades_flow.get(year if year is not None else "all", 0.0))
     biz = 0.0
     if business is not None and len(business):       # capital put into businesses, by the date they started
         bz = business[in_year(business["started_on"])]
         biz = float(num(bz["invested"]).sum())
-    invested = stocks + m + r + biz
+    invested = stocks + m + r + biz + pf
 
     def paid(frame):
         if frame is None or not len(frame):
@@ -805,7 +808,7 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
         return float(num(f["amount"]).sum())
 
     insurance_total, loans_paid = paid(insurance_paid), paid(loan_paid)
-    return {"income": income_total, "stocks": stocks, "metals": float(m), "real_estate": float(r), "business": biz,
+    return {"income": income_total, "stocks": stocks, "metals": float(m), "real_estate": float(r), "business": biz, "pf": pf,
             "invested": invested, "saved": saved, "insurance": insurance_total, "loans": loans_paid,
             "expense": income_total - invested - saved - insurance_total - loans_paid,
             "savings_rate_pct": (invested + saved) / income_total * 100 if income_total else 0.0}
