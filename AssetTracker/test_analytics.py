@@ -1091,3 +1091,64 @@ def test_invested_share_and_category_summary_sorted_highest_first():
     assert an.category_summary(pos.iloc[0:0]).empty
     empty = an.invested_shares(pos.assign(qty=0.0))
     assert (empty["invested_pct"] == 0).all()
+
+
+# ---- Summary: the two-level ideal plan ---------------------------------------------------------------------
+def _subs(rows):
+    return pd.DataFrame(rows, columns=["category", "sub", "pct"])
+
+
+def test_plan_second_table_is_a_share_of_the_first():
+    main = {"Savings": 20.0, "Investment": 40.0, "EMI": 10.0, "Expenses": 25.0, "Leisure": 5.0}
+    subs = _subs([["Investment", "Mutual Funds", 50.0], ["Investment", "Gold", 30.0], ["Investment", "ETFs", 10.0]])
+    plan = an.target_plan(main, subs, 100000.0)
+    inv = plan[plan["category"] == "Investment"].set_index(plan[plan["category"] == "Investment"]["sub"].fillna("(main)"))
+    assert inv.loc["(main)", "pct_of_income"] == 40 and inv.loc["(main)", "amount"] == 40000
+    assert inv.loc["Mutual Funds", "pct_of_income"] == 20 and inv.loc["Mutual Funds", "amount"] == 20000     # 50% of 40%
+    assert inv.loc["Gold", "pct_of_income"] == 12 and inv.loc["ETFs", "pct_of_income"] == 4
+    assert inv.loc["Not divided yet", "pct_of_category"] == 10 and round(inv.loc["Not divided yet", "pct_of_income"], 6) == 4
+    # the sub-categories (with the undivided rest) always add back up to the main category
+    assert round(inv.drop("(main)")["pct_of_income"].sum(), 6) == 40
+    assert round(inv.drop("(main)")["amount"].sum(), 6) == 40000
+    assert "Trading" not in set(plan["category"]) and "Real-Estate" not in set(plan["category"])   # nothing set: left out
+    mains = plan[plan["sub"].isna()]
+    assert round(mains["pct_of_income"].sum(), 6) == 100
+
+
+def test_plan_targets_feed_the_ideal_vs_reality_buckets():
+    main = {"Savings": 20.0, "Investment": 40.0, "Real-Estate": 15.0}
+    subs = _subs([["Investment", "Mutual Funds", 50.0], ["Investment", "Gold", 25.0], ["Investment", "My own thing", 25.0]])
+    t = an.bucket_targets(main, subs)
+    assert t == {"Cash & Savings": 20.0, "Real Estate": 15.0, "Mutual Funds": 20.0, "Gold": 10.0}   # unknown names unmapped
+    assert an.bucket_targets({}, _subs([])) == {}
+
+
+def test_plan_actuals_per_main_category():
+    flow = {"saved": 100.0, "stocks": 300.0, "metals": 50.0, "real_estate": 70.0, "loans": 40.0, "expense": 200.0,
+            "insurance": 25.0}
+    a = an.main_actuals(flow)
+    assert a["Savings"] == 100 and a["Investment"] == 350 and a["Real-Estate"] == 70 and a["EMI"] == 40
+    assert a["Expenses"] == 225 and a["Trading"] is None and a["Leisure"] is None
+
+
+def test_plan_validation():
+    ok = val.validate_targets({"Savings": 60.0, "Investment": 40.0}, _subs([["Investment", "Gold", 60.0], ["Investment", "ETFs", 40.0]]))
+    assert ok == []
+    over = val.validate_targets({"Savings": 70.0, "Investment": 40.0}, _subs([]))
+    assert any("add up to 110% of income" in x for x in over)
+    bad_sub = val.validate_targets({"Investment": 40.0}, _subs([["Investment", "Gold", 70.0], ["Investment", "ETFs", 40.0]]))
+    assert any("add up to 110% of Investment" in x for x in bad_sub)
+    msgs = val.validate_targets({}, _subs([["Investment", "Gold", 10.0], ["Investment", "gold", 10.0], ["Leisure", "", 5.0],
+                                          [None, "x", 5.0], ["EMI", "Good", -5.0]]))
+    text = " ".join(msgs)
+    assert "repeats row 1" in text and "needs a name" in text and "choose a main category" in text and "between 0 and 100" in text
+
+
+def test_plan_is_stored_and_replaced(path):
+    db.init_db(path)
+    db.set_targets({"Savings": 20.0, "Investment": 0.0, "Bogus": 10.0},
+                   _subs([["Investment", "Gold", 50.0], ["Investment", " ", 10.0], ["Nope", "x", 5.0], ["Leisure", "Travel", 0.0]]), path)
+    assert db.get_target_main(path) == {"Savings": 20.0}                       # zeros, blanks and unknown rows are dropped
+    assert db.get_target_sub(path)[["category", "sub", "pct"]].values.tolist() == [["Investment", "Gold", 50.0]]
+    db.set_targets({"Expenses": 30.0}, _subs([]), path)                         # saving again replaces everything
+    assert db.get_target_main(path) == {"Expenses": 30.0} and db.get_target_sub(path).empty

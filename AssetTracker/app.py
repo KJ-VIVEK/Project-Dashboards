@@ -378,18 +378,61 @@ with tabs[0]:
             st.caption("Loan payments are partly estimated: the Loans tab stores totals, so instalments are placed one "
                        "a month from the month after the start date.")
 
-    # ---- ideal vs reality:  Ideal = Income x %
-    st.subheader("Investments: ideal vs reality")
-    pcts = db.get_target_pcts()
-    alloc = an.allocation(buckets, pcts, income_total)
-    planned = sum(pcts.values())
-    c = st.columns(3)
+    # ---- the ideal plan: income -> main categories -> sub-categories
+    st.subheader("Ideal plan: where income should go")
+    plan_main, plan_subs = db.get_target_main(), db.get_target_sub()
+    plan = an.target_plan(plan_main, plan_subs, income_total)
+    m_sum = sum(plan_main.values())
+    grow = sum(plan_main.get(k, 0.0) for k in ("Savings", "Investment", "Real-Estate", "Trading"))
+    spend = sum(plan_main.get(k, 0.0) for k in ("EMI", "Expenses", "Leisure"))
+    c = st.columns(4)
     kpi(c[0], f"Income ({period})", income_total)
-    kpi(c[1], "Planned to invest + save", f"{planned:.1f}% of income")
-    kpi(c[2], "Left for expenses", f"{100 - planned:.1f}% of income")
-    st.caption("**Ideal = income × the % you set for each bucket.** Reality = current value of what you hold.")
-    if income_total == 0:
-        st.info("Ideal values are income × %, so they show once income is recorded on the Source tab.")
+    kpi(c[1], "Planned to save + invest", f"{grow:.1f}% of income", help="Savings + Investment + Real-Estate + Trading")
+    kpi(c[2], "Planned EMI + expenses + leisure", f"{spend:.1f}% of income")
+    kpi(c[3], "Not allocated", f"{100 - m_sum:.1f}% of income")
+    if not plan_main:
+        st.info("No ideal plan yet. Open “Set ideal values” below to split your income into Savings, Investment, "
+                "Real-Estate, Trading, EMI, Expenses and Leisure, and then divide each one further.")
+    else:
+        actual = an.main_actuals(flow)
+        rows = []
+        for cat in db.MAIN_CATEGORIES:
+            ideal_pct = plan_main.get(cat, 0.0)
+            act = actual[cat]
+            rows.append({"Category": cat, "Ideal %": ideal_pct, "Ideal ₹": income_total * ideal_pct / 100,
+                         "Actual ₹": act, "Actual % of income": (act / income_total * 100) if (act is not None and income_total) else None,
+                         "Left (ideal − actual) ₹": (income_total * ideal_pct / 100 - act) if act is not None else None})
+        mt = pd.DataFrame(rows)
+        mt = mt[(mt["Ideal %"] > 0) | mt["Actual ₹"].fillna(0).ne(0)]
+        st.markdown("**Main split**")
+        st.dataframe(mt, hide_index=True, width="stretch", column_config={
+            "Ideal %": st.column_config.NumberColumn(format="%.1f%%"),
+            "Ideal ₹": st.column_config.NumberColumn(format="₹%.0f"),
+            "Actual ₹": st.column_config.NumberColumn(format="₹%.0f"),
+            "Actual % of income": st.column_config.NumberColumn(format="%.1f%%"),
+            "Left (ideal − actual) ₹": st.column_config.NumberColumn(format="₹%.0f")})
+        st.caption("Actual comes from “Where the income went” above: Savings = saved, Investment = stocks, funds and gold/silver "
+                   "bought, Real-Estate = property bought, EMI = loan payments, Expenses = what is left plus insurance "
+                   "(leisure is not tracked apart, so it is inside Expenses). Trading cannot be told apart from other stock "
+                   "buying, so it shows –.")
+        if not plan.empty and plan["sub"].notna().any():
+            st.markdown("**Divided further** (each row is a share of its category)")
+            sub_tbl = plan.copy()
+            sub_tbl["sub"] = sub_tbl["sub"].fillna("Whole category")
+            st.dataframe(sub_tbl.rename(columns={"category": "Category", "sub": "Sub-category",
+                                                 "pct_of_category": "% of category", "pct_of_income": "% of income",
+                                                 "amount": "Ideal ₹"}),
+                         hide_index=True, width="stretch", column_config={
+                "% of category": st.column_config.NumberColumn(format="%.1f%%"),
+                "% of income": st.column_config.NumberColumn(format="%.1f%%"),
+                "Ideal ₹": st.column_config.NumberColumn(format="₹%.0f")})
+
+    st.subheader("Investments: ideal vs reality")
+    pcts = an.bucket_targets(plan_main, plan_subs)
+    alloc = an.allocation(buckets, pcts, income_total)
+    st.caption("**Ideal = income × the main % × the share you gave each type.** Reality = current value of what you hold. "
+               "Cash & Savings and Real Estate use the whole Savings and Real-Estate shares; investment types use the "
+               "second table.")
     a = alloc[(alloc["value"] > 0) | (alloc["target"] > 0)]
     left, right = st.columns([3, 2])
     with left:
@@ -411,20 +454,50 @@ with tabs[0]:
     st.dataframe(fmt_df(table, ["Invested", "Current value", "Ideal ₹", "Left to invest (−: over)"],
                         ["Actual % of income", "Ideal %"]), hide_index=True, width="stretch")
 
-    with st.expander("Set ideal values (% of income per bucket)"):
-        tdf = pd.DataFrame({"bucket": db.INVESTMENT_BUCKETS,
-                            "pct": [pcts.get(b, 0.0) for b in db.INVESTMENT_BUCKETS]})
-        ted = st.data_editor(tdf, hide_index=True, width="stretch", key=f"targets_{version('targets')}",
-                             disabled=["bucket"], column_config={
-                                 "bucket": "Bucket", "pct": st.column_config.NumberColumn(
+    with st.expander("Set ideal values"):
+        st.markdown("**1. Split your income**")
+        mdf = pd.DataFrame({"category": db.MAIN_CATEGORIES, "pct": [plan_main.get(k, 0.0) for k in db.MAIN_CATEGORIES]})
+        med = st.data_editor(mdf, hide_index=True, width="stretch", key=f"targets_main_{version('targets')}",
+                             disabled=["category"], column_config={
+                                 "category": "Main category", "pct": st.column_config.NumberColumn(
                                      "% of income", min_value=0, max_value=100, format="%.1f")})
-        st.caption(f"Total {ted['pct'].fillna(0).sum():.1f}%. What is not allocated is your expense budget. "
-                   "0 means no target.")
+        mtot = float(med["pct"].fillna(0).sum())
+        st.caption(f"Total {mtot:.1f}% of income. Not allocated: {100 - mtot:.1f}%. Leave a category at 0 to skip it.")
+
+        st.markdown("**2. Divide a category further**")
+        st.caption("Each row is a share of its main category: if Investment is 40% of income and Mutual Funds is 50% of "
+                   "Investment, Mutual Funds gets 20% of income. Add rows at the bottom (name them as you like); for "
+                   "Investment, Gold, Silver and the stock categories are matched to your holdings in the chart below.")
+        have = {(r.category, r.sub) for r in plan_subs.itertuples()}
+        seed = plan_subs.copy()
+        extra = [{"category": cat, "sub": s, "pct": 0.0} for cat in db.MAIN_CATEGORIES
+                 for s in (db.SUB_SUGGESTIONS.get(cat) or []) if (cat, s) not in have]
+        if extra:
+            seed = pd.concat([seed, pd.DataFrame(extra)], ignore_index=True)
+        seed["_o"] = seed["category"].map({k: i for i, k in enumerate(db.MAIN_CATEGORIES)})
+        seed = seed.sort_values("_o", kind="stable").drop(columns="_o").reset_index(drop=True)
+        sed = st.data_editor(seed, hide_index=True, width="stretch", num_rows="dynamic",
+                             key=f"targets_sub_{version('targets')}", column_config={
+                                 "category": st.column_config.SelectboxColumn("Main category", options=db.MAIN_CATEGORIES,
+                                                                              required=True),
+                                 "sub": st.column_config.TextColumn("Sub-category", required=True),
+                                 "pct": st.column_config.NumberColumn("% of the category", min_value=0, max_value=100,
+                                                                      format="%.1f")})
+        used = sed.dropna(subset=["category"]).groupby("category")["pct"].apply(lambda s: float(s.fillna(0).sum()))
+        used = used[used > 0]
+        if len(used):
+            st.caption("Divided so far: " + " · ".join(
+                f"{k} {v:.0f}% ({'over by ' + format(v - 100, 'g') + '%' if v > 100 else format(100 - v, 'g') + '% left'})"
+                for k, v in used.items()))
         if st.button("Save ideal values", type="primary", key="save_targets"):
-            if ted["pct"].fillna(0).sum() > 100.0001:
-                st.error("The percentages add up to more than 100%.")
+            new_main = dict(zip(med["category"], med["pct"].fillna(0.0)))
+            problems = validation.validate_targets(new_main, sed)
+            if problems:
+                st.error("**Nothing was saved.** Fix these and press Save again:\n\n" + "\n".join(f"- {x}" for x in problems),
+                         icon=":material/error:")
             else:
-                db.set_target_pcts(dict(zip(ted["bucket"], ted["pct"])))
+                db.backup()
+                db.set_targets(new_main, sed.dropna(subset=["category"]))
                 flash("Ideal values saved.")
                 bump("targets")
                 st.rerun()

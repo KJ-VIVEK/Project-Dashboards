@@ -34,12 +34,19 @@ DEFAULT_PURITY = {"Gold": "24K", "Silver": "999"}
 # Starting local premium over the international price: India's 6% import duty. Calibrate it to your jeweller.
 DEFAULT_PREMIUM = {"Gold": 6.0, "Silver": 6.0}
 SAVINGS_BUCKET = "Cash & Savings"
+# the ideal plan: income is first split into these main categories, each of which can be divided further
+MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Trading", "EMI", "Expenses", "Leisure"]
+INVESTMENT_PLAN_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver"]
+SUB_SUGGESTIONS = {   # starting points for the second table; the user can rename, delete and add rows
+    "Savings": None, "Investment": INVESTMENT_PLAN_BUCKETS, "Real-Estate": ["Real Estate"], "Trading": [],
+    "EMI": ["Good", "Bad", "Worst"], "Expenses": [], "Leisure": []}
 INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
 # kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
 INTEREST_KINDS = ["FD", "RD", "Savings Account"]
 TERM_KINDS = ["FD", "RD", "PPF"]
 SAVINGS_KINDS = ["Savings Account", "Cash in Hand", "FD", "RD", "EPF", "NPS", "PPF", "Short-term Goal"]
+SUB_SUGGESTIONS["Savings"] = list(SAVINGS_KINDS)
 INSURED_FOR = ["Me", "Family", "Own Damage (OD)", "Third Party (TP)", "Other"]   # who or what a policy covers
 INSURANCE_TYPES = ["Term Life", "Health", "Life/Endowment", "Vehicle", "Home", "Travel", "Other"]
 FREQUENCIES = {"Monthly": 12, "Quarterly": 4, "Half-Yearly": 2, "Yearly": 1}
@@ -100,6 +107,10 @@ CREATE TABLE IF NOT EXISTS real_estate (
     area_sqft REAL, registration REAL, brokerage REAL, other_charges REAL,
     rent_yielding INTEGER NOT NULL DEFAULT 0, monthly_rent REAL, current_per_sqft REAL, note TEXT);
 CREATE TABLE IF NOT EXISTS target_pcts (bucket TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
+CREATE TABLE IF NOT EXISTS target_main (category TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
+CREATE TABLE IF NOT EXISTS target_sub (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, sub TEXT NOT NULL,
+    pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL, body TEXT, kind TEXT, done INTEGER NOT NULL DEFAULT 0, created TEXT, updated TEXT);
@@ -319,6 +330,30 @@ def set_target_pcts(pcts: dict[str, float], path: str | None = None) -> None:
                           "ON CONFLICT(bucket) DO UPDATE SET pct=excluded.pct", (bucket, pct))
             else:
                 c.execute("DELETE FROM target_pcts WHERE bucket=?", (bucket,))
+
+
+def get_target_main(path: str | None = None) -> dict[str, float]:
+    with connect(path) as c:
+        return {r["category"]: r["pct"] for r in c.execute("SELECT category, pct FROM target_main")}
+
+
+def get_target_sub(path: str | None = None) -> pd.DataFrame:
+    with connect(path) as c:
+        return pd.read_sql_query("SELECT category, sub, pct FROM target_sub ORDER BY id", c)
+
+
+def set_targets(main: dict[str, float], subs: pd.DataFrame, path: str | None = None) -> None:
+    """Replace the whole ideal plan: main-category % of income and the sub-category % of each category."""
+    with connect(path) as c:
+        c.execute("DELETE FROM target_main")
+        for cat, pct in main.items():
+            if cat in MAIN_CATEGORIES and float(pct or 0) > 0:
+                c.execute("INSERT INTO target_main(category, pct) VALUES (?,?)", (cat, min(float(pct), 100.0)))
+        c.execute("DELETE FROM target_sub")
+        for _, r in subs.iterrows():
+            if r["category"] in MAIN_CATEGORIES and str(r["sub"]).strip() and float(r["pct"] or 0) > 0:
+                c.execute("INSERT INTO target_sub(category, sub, pct) VALUES (?,?,?)",
+                          (r["category"], str(r["sub"]).strip(), min(float(r["pct"]), 100.0)))
 
 
 # ---------- meta ----------
