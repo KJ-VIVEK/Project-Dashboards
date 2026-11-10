@@ -1038,24 +1038,26 @@ def test_savings_validation_dates_goal_and_interest():
 
 
 # ---- Summary: where the income went, with insurance and loans ----------------------------------------------
-def test_loan_payments_for_the_closed_ktm_loan_add_up_to_what_was_paid():
+def test_loan_payments_count_only_interest_and_charges_for_the_closed_ktm_loan():
     lp = an.loan_payments(pd.DataFrame([KTM]), today=date(2026, 11, 10))
     by = lp.groupby("kind")["amount"].agg(["size", "sum"])
-    assert by.loc["Down payment", "sum"] == 150000
-    assert by.loc["Instalment", "size"] == 8 and round(by.loc["Instalment", "sum"], 2) == 54756 * 1   # 8 x 54,756 / 8 each
-    assert by.loc["Closing payment", "sum"] == 258466
-    assert round(lp["amount"].sum(), 2) == 150000 + 54756 + 258466 == 463222
-    assert lp["date"].min() == KTM["start_date"] and lp["date"].max() == KTM["closed_date"]
-    inst = lp[lp["kind"] == "Instalment"]["date"]
+    assert set(by.index) == {"Interest", "Other charges"}              # no down payment, no principal, no closing payment
+    assert by.loc["Interest", "size"] == 8 and round(by.loc["Interest", "sum"], 2) == 29043
+    assert by.loc["Other charges", "sum"] == 11179
+    assert round(lp["amount"].sum(), 2) == 29043 + 11179 == 40222        # = cost of borrowing
+    assert lp[lp["kind"] == "Other charges"]["date"].iloc[0] == KTM["closed_date"]
+    inst = lp[lp["kind"] == "Interest"]["date"]
     assert inst.min() == date(2023, 12, 30) and inst.max() <= KTM["closed_date"]      # from the month after the start
 
 
-def test_loan_payments_for_a_running_loan_use_the_emi_and_elapsed_months():
+def test_loan_payments_for_a_running_loan_estimate_the_interest_so_far():
     run = dict(KTM, status="Active", closed_date=None, outstanding=150000.0, installments_paid=None, emi_paid=None,
-               emi_interest=None, closing_payment=None, emi=5000.0, down_payment=None,
+               emi_interest=None, closing_payment=None, emi=5000.0, down_payment=None, other_charges=None,
                start_date=date(2026, 1, 15), end_date=date(2027, 1, 15))
     lp = an.loan_payments(pd.DataFrame([run]), today=date(2026, 6, 20))
-    assert len(lp) == 5 and (lp["amount"] == 5000).all() and lp["date"].max() == date(2026, 6, 15)   # Feb..Jun
+    exp = an.emi_schedule(273000.0, 16.5, 12, 5)["interest_paid"]
+    assert len(lp) == 5 and (lp["kind"] == "Interest").all() and lp["date"].max() == date(2026, 6, 15)   # Feb..Jun
+    assert abs(lp["amount"].sum() - exp) < 0.01 and lp["amount"].sum() < 273000 * 0.1
     assert an.loan_payments(pd.DataFrame(), today=date(2026, 6, 20)).empty
 
 

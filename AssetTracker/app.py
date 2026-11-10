@@ -309,10 +309,11 @@ with tabs[0]:
     prem_on = st.toggle("Count insurance premiums paid as spending (from the Insurance tab)", value=True, key="sum_prem",
                         help="Premiums are counted in the month you paid them (a yearly premium whole, on its start "
                              "date and each anniversary; a monthly one every month) under “Where the income went”.")
-    loans_on = st.toggle("Count loan payments as spending (from the Loans tab)", value=True, key="sum_loans",
-                         help="Down payments, instalments (one a month from the month after the start date) and closing "
-                              "payments, under “Where the income went”. Instalment dates are worked out from the totals "
-                              "on the Loans tab.")
+    loans_on = st.toggle("Count the cost of loans (interest and charges) as spending (from the Loans tab)", value=True, key="sum_loans",
+                         help="Only what borrowing cost: the interest paid and other charges, under “Where the income went”. "
+                              "The down payment and the principal are not counted (they bought an asset or are part of "
+                              "your spending). Interest is spread over the instalments, one a month from the month after "
+                              "the start date.")
     inc = an.income_frame(income, dividends, realised, auto, None, usd_inr=fx, extra_tax_pct=extra_pct)
     years = sorted(inc["year"].unique(), reverse=True)
     period = st.selectbox("Period", ["All time"] + years, key="sum_year",
@@ -354,8 +355,8 @@ with tabs[0]:
     kpi(c[2], "Saved", flow["saved"], help="Cash, FD, EPF, NPS and goal balances" + (
         "; for a single year, only entries with a start date in it" if yr else ""))
     kpi(c[3], "Insurance", flow["insurance"], help="Premiums actually paid in the period (Insurance tab)")
-    kpi(c[4], "Loans", flow["loans"], help="Down payments, instalments and closing payments in the period (Loans tab)")
-    kpi(c[5], "Expenses (left over)", flow["expense"], help="Income − Invested − Saved − Insurance − Loans")
+    kpi(c[4], "Loan interest & charges", flow["loans"], help="Interest and other charges paid on loans in the period (Loans tab). Not the loan amount or the down payment")
+    kpi(c[5], "Expenses (left over)", flow["expense"], help="Income − Invested − Saved − Insurance − Loan interest & charges")
     st.caption(f"**Expenses = Income − Investments − Savings − Insurance − Loans.** Whatever you earned and did not "
                f"invest, save, put into insurance or pay on loans is treated as spent. Invested + saved is "
                f"{flow['savings_rate_pct']:.0f}% of income. Investments are net of units sold (recycled capital is not "
@@ -377,8 +378,8 @@ with tabs[0]:
                       color="rgba(137,135,129,0.25)")))
         show(style(fig, "Income → investments, savings, insurance, loans and expenses", height=340))
         if flow["loans"] and loan_paid is not None and len(loan_paid):
-            st.caption("Loan payments are partly estimated: the Loans tab stores totals, so instalments are placed one "
-                       "a month from the month after the start date.")
+            st.caption("Loans here is the cost of borrowing only (interest and charges). Its dates are estimated: the Loans tab "
+                       "stores totals, so the interest is placed one instalment a month from the month after the start date.")
 
     # ---- the ideal plan: income -> main categories -> sub-categories
     st.subheader("Plan vs reality: where income should go")
