@@ -662,13 +662,14 @@ def bucket_values(positions: pd.DataFrame, metals: pd.DataFrame, real_estate: pd
     rows = []
     for b in db.SECURITY_CATEGORIES:
         p = positions[positions["category"] == b]
-        rows.append((b, p["value"].sum(), p["invested"].sum()))
+        rows.append((db.PLAN_GROUP.get(b, b), p["value"].sum(), p["invested"].sum()))
     for m in db.METALS:
         x = metals[metals["metal"] == m]
-        rows.append((m, x["value"].sum(), x["invested"].sum()))
+        rows.append((db.PLAN_GROUP.get(m, m), x["value"].sum(), x["invested"].sum()))
     rows.append(("Real Estate", real_estate["value"].sum(), real_estate["total_cost"].sum()))
     rows.append((db.SAVINGS_BUCKET, savings_total, savings_total))
-    return pd.DataFrame(rows, columns=["bucket", "value", "invested"])
+    out = pd.DataFrame(rows, columns=["bucket", "value", "invested"])
+    return out.groupby("bucket", sort=False, as_index=False).sum()
 
 
 def target_plan(main: dict, subs: pd.DataFrame, income: float) -> pd.DataFrame:
@@ -701,7 +702,7 @@ def target_plan(main: dict, subs: pd.DataFrame, income: float) -> pd.DataFrame:
 def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
     """The ideal % of income for each holding bucket, taken from the plan (for the ideal-vs-reality chart):
     Savings -> Cash & Savings, Real-Estate -> Real Estate, and each Investment sub-category named like a bucket
-    (a stock category, Gold or Silver) -> that bucket."""
+    (a stock category, "Index Funds & ETFs" or "Gold & Silver") -> that bucket."""
     out: dict[str, float] = {}
     if main.get("Savings"):
         out[db.SAVINGS_BUCKET] = float(main["Savings"])
@@ -710,8 +711,9 @@ def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
     inv = float(main.get("Investment", 0.0) or 0.0)
     if inv and len(subs):
         for _, r in subs[subs["category"] == "Investment"].iterrows():
-            if r["sub"] in db.INVESTMENT_PLAN_BUCKETS:
-                out[r["sub"]] = out.get(r["sub"], 0.0) + inv * float(r["pct"] or 0.0) / 100
+            name = db.PLAN_GROUP.get(r["sub"], r["sub"])      # older rows named ETFs / Gold still count
+            if name in db.INVESTMENT_PLAN_BUCKETS:
+                out[name] = out.get(name, 0.0) + inv * float(r["pct"] or 0.0) / 100
     return out
 
 
