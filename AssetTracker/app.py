@@ -392,7 +392,7 @@ with tabs[0]:
     kpi(c[3], "Not allocated", f"{100 - m_sum:.1f}% of income")
     if not plan_main:
         st.info("No ideal plan yet. Open “Set ideal values” below to split your income into Savings, Investment, "
-                "Real-Estate, Trading, EMI and Expenses & Leisure, and then divide each one further.")
+                "Real-Estate, Trading, EMI and Expenses & Leisure, and then divide Investment further.")
     else:
         actual = an.main_actuals(flow)
         rows = []
@@ -464,13 +464,13 @@ with tabs[0]:
         mtot = float(med["pct"].fillna(0).sum())
         st.caption(f"Total {mtot:.1f}% of income. Not allocated: {100 - mtot:.1f}%. Leave a category at 0 to skip it.")
 
-        st.markdown("**2. Divide a category further**")
-        st.caption("Each row is a share of its main category: if Investment is 40% of income and Mutual Funds is 50% of "
-                   "Investment, Mutual Funds gets 20% of income. Add rows at the bottom (name them as you like); for "
-                   "Investment, Gold, Silver and the stock categories are matched to your holdings in the chart below.")
+        st.markdown("**2. Divide Investment further**")
+        st.caption("Only Investment is divided further; every other category is just its % of income. If Investment is 40% of "
+                   "income and Mutual Funds is 50% of Investment, Mutual Funds gets 20% of income. Add rows at the bottom "
+                   "(name them as you like); Gold, Silver and the stock categories are matched to your holdings in the chart below.")
         have = {(r.category, r.sub) for r in plan_subs.itertuples()}
         seed = plan_subs.copy()
-        extra = [{"category": cat, "sub": s, "pct": 0.0} for cat in db.MAIN_CATEGORIES
+        extra = [{"category": cat, "sub": s, "pct": 0.0} for cat in db.SUB_CATEGORIES
                  for s in (db.SUB_SUGGESTIONS.get(cat) or []) if (cat, s) not in have]
         if extra:
             seed = pd.concat([seed, pd.DataFrame(extra)], ignore_index=True)
@@ -478,7 +478,7 @@ with tabs[0]:
         seed = seed.sort_values("_o", kind="stable").drop(columns="_o").reset_index(drop=True)
         sed = st.data_editor(seed, hide_index=True, width="stretch", num_rows="dynamic",
                              key=f"targets_sub_{version('targets')}", column_config={
-                                 "category": st.column_config.SelectboxColumn("Main category", options=db.MAIN_CATEGORIES,
+                                 "category": st.column_config.SelectboxColumn("Main category", options=db.SUB_CATEGORIES,
                                                                               required=True),
                                  "sub": st.column_config.TextColumn("Sub-category", required=True),
                                  "pct": st.column_config.NumberColumn("% of the category", min_value=0, max_value=100,
