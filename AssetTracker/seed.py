@@ -9,6 +9,8 @@ import random
 import sys
 from datetime import date, timedelta
 
+import pandas as pd
+
 import db
 
 random.seed(11)
@@ -132,9 +134,11 @@ def main(out, reset):
                   "done": False, "created": str(today), "updated": str(today)})
     ins("notes", {"title": "Idea: sovereign gold bonds", "body": "Check next tranche.", "kind": "Idea",
                   "done": False, "created": str(today), "updated": str(today)})
-    db.set_target_pcts({"India - High Quality": 8, "India - Risky": 1, "Index Funds": 4, "Mutual Funds": 3, "ETFs": 1,
-                        "International - Stable": 4, "International - Risky": 1, "REITs/InvITs": 2, "Crypto": 2,
-                        "Gold": 3, "Silver": 0.5, "Real Estate": 10, "Cash & Savings": 15}, out)
+    db.set_targets({"Savings": 15, "Investment": 30, "Real-Estate": 10, "Business & Trading": 5, "EMI": 10,
+                    "Expenses & Leisure": 30},
+                   pd.DataFrame([["Investment", "Mutual Funds", 40.0], ["Investment", "Index Funds & ETFs", 30.0],
+                                 ["Investment", "India - High Quality", 20.0], ["Investment", "Gold & Silver", 10.0]],
+                                columns=["category", "sub", "pct"]), out)
     print("Demo database written to", out)
 
 

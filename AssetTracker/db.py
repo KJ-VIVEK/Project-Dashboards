@@ -42,7 +42,6 @@ INVESTMENT_PLAN_BUCKETS = list(dict.fromkeys(PLAN_GROUP.get(c, c) for c in SECUR
 SUB_CATEGORIES = ["Investment"]   # only these can be divided further; the rest are a single % of income
 SUB_SUGGESTIONS = {   # starting points for the second table; the user can rename, delete and add rows
     "Investment": INVESTMENT_PLAN_BUCKETS}
-INVESTMENT_BUCKETS = INVESTMENT_PLAN_BUCKETS + ["Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
 # kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
 INTEREST_KINDS = ["FD", "RD", "Savings Account"]
@@ -65,7 +64,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL, source TEXT NOT NULL, description TEXT, amount REAL NOT NULL,
-    tax_paid REAL, other_deductions REAL, usd_amount REAL,
+    tax_paid REAL, other_deductions REAL,
     rsu_qty REAL, rsu_buy_price REAL,
     rsu_sold_qty REAL, rsu_sell_price REAL, rsu_sell_date TEXT, rsu_sell_fx REAL, tax_pct REAL);
 CREATE TABLE IF NOT EXISTS securities (
@@ -116,7 +115,6 @@ CREATE TABLE IF NOT EXISTS business (
     name TEXT NOT NULL, kind TEXT, what TEXT, started_on TEXT, invested REAL NOT NULL,
     money_made REAL, money_lost REAL, status TEXT NOT NULL DEFAULT 'Running', closed_on TEXT,
     current_value REAL, note TEXT);
-CREATE TABLE IF NOT EXISTS target_pcts (bucket TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS target_main (category TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS target_sub (
     id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, sub TEXT NOT NULL,
@@ -182,7 +180,6 @@ _MIGRATIONS = [("securities", "currency", "TEXT DEFAULT 'INR'"), ("trades", "fx_
                ("insurance", "start_date", "TEXT"), ("insurance", "end_date", "TEXT"),
                ("insurance", "insured_for", "TEXT"),
                ("income", "tax_paid", "REAL"), ("income", "other_deductions", "REAL"),
-               ("income", "usd_amount", "REAL"),
                ("income", "rsu_qty", "REAL"), ("income", "rsu_buy_price", "REAL"),
                ("income", "rsu_sold_qty", "REAL"), ("income", "rsu_sell_price", "REAL"),
                ("income", "rsu_sell_date", "TEXT"), ("income", "rsu_sell_fx", "REAL"),
@@ -319,31 +316,7 @@ def delete_row(table: str, row_id: int, path: str | None = None) -> None:
             c.execute("DELETE FROM insurance_revisions WHERE insurance_id NOT IN (SELECT id FROM insurance)")
 
 
-def delete_security(security_id: int, path: str | None = None) -> None:
-    """Remove a holding together with its trades and dividends."""
-    with connect(path) as c:
-        c.execute("DELETE FROM trades WHERE security_id=?", (security_id,))
-        c.execute("DELETE FROM dividends WHERE security_id=?", (security_id,))
-        c.execute("DELETE FROM securities WHERE id=?", (security_id,))
-
-
-# ---------- ideal allocation (percent of income) ----------
-def get_target_pcts(path: str | None = None) -> dict[str, float]:
-    with connect(path) as c:
-        return {r["bucket"]: r["pct"] for r in c.execute("SELECT bucket, pct FROM target_pcts")}
-
-
-def set_target_pcts(pcts: dict[str, float], path: str | None = None) -> None:
-    with connect(path) as c:
-        for bucket, pct in pcts.items():
-            pct = min(max(float(pct or 0), 0.0), 100.0)
-            if pct > 0:
-                c.execute("INSERT INTO target_pcts(bucket, pct) VALUES (?,?) "
-                          "ON CONFLICT(bucket) DO UPDATE SET pct=excluded.pct", (bucket, pct))
-            else:
-                c.execute("DELETE FROM target_pcts WHERE bucket=?", (bucket,))
-
-
+# ---------- the ideal plan (percent of income) ----------
 def get_target_main(path: str | None = None) -> dict[str, float]:
     with connect(path) as c:
         return {r["category"]: r["pct"] for r in c.execute("SELECT category, pct FROM target_main")}

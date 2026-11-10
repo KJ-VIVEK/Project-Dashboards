@@ -104,14 +104,6 @@ def test_real_estate_metrics():
     assert f.rent_yield_pct == pytest.approx(240_000 / 5_350_000 * 100)
 
 
-def test_ideal_is_income_times_percent():
-    b = pd.DataFrame({"bucket": ["Gold", "Crypto"], "value": [300.0, 100.0], "invested": [0, 0]})
-    a = an.allocation(b, {"Gold": 20, "Crypto": 50}, income=1000).set_index("bucket")
-    assert a.loc["Gold", "target"] == 200 and a.loc["Crypto", "target"] == 500
-    assert a.loc["Gold", "actual_pct"] == 30 and a.loc["Gold", "gap"] == -100 and a.loc["Crypto", "gap"] == 400
-    assert an.allocation(b, {"Gold": 20}, income=0)["target"].sum() == 0
-
-
 def test_usd_holding_uses_trade_fx_for_cost_and_live_fx_for_value():
     s = pd.DataFrame([{"id": 1, "name": "AAPL", "symbol": "AAPL", "category": "International - Stable",
                        "reason": "", "current_price": 200.0, "currency": "USD"}])
@@ -182,11 +174,9 @@ def test_sync_keeps_row_when_required_value_cleared(path):
     assert stats["deleted"] == 0 and len(db.get_table("income", path)) == 1
 
 
-def test_flags_roundtrip_and_targets(path):
+def test_flags_roundtrip(path):
     db.insert("insurance", {"name": "Term", "premium": 1, "frequency": "Yearly", "active": True}, path)
     assert db.get_table("insurance", path)["active"].iloc[0] in (True, False)
-    db.set_target_pcts({"Gold": 25, "Crypto": 0, "ETFs": 500}, path)
-    assert db.get_target_pcts(path) == {"Gold": 25.0, "ETFs": 100.0}
 
 
 def test_loans_markdown_and_security_cascade(path):
@@ -826,13 +816,6 @@ def test_memo_row_shows_epf_nps_per_month_and_year_without_touching_totals():
     assert _source_total_row(an.income_frame(inc, d, r), 2025).loc["Total", "Total"] == 1500 - 100
 
 
-def test_rsu_value_is_units_times_buy_value_times_rate():
-    v = an.rsu_value(10, 25.5, 83.2)
-    assert v["usd"] == 255 and round(v["inr"], 2) == 21216.0
-    assert an.rsu_value(0, 25.5, 83.2) == {"usd": 0.0, "inr": 0.0}
-    assert an.rsu_value(None, None, None)["inr"] == 0.0
-
-
 def test_average_growth_and_trend_line():
     net = pd.Series({2022: 100.0, 2023: 110.0, 2024: 132.0})
     yoy = pd.Series([float("nan"), 10.0, 20.0])
@@ -1115,14 +1098,6 @@ def test_plan_second_table_is_a_share_of_the_first():
     assert "Business & Trading" not in set(plan["category"]) and "Real-Estate" not in set(plan["category"])   # nothing set: left out
     mains = plan[plan["sub"].isna()]
     assert round(mains["pct_of_income"].sum(), 6) == 100
-
-
-def test_plan_targets_feed_the_ideal_vs_reality_buckets():
-    main = {"Savings": 20.0, "Investment": 40.0, "Real-Estate": 15.0}
-    subs = _subs([["Investment", "Mutual Funds", 50.0], ["Investment", "Gold & Silver", 15.0], ["Investment", "Silver", 10.0], ["Investment", "My own thing", 25.0]])
-    t = an.bucket_targets(main, subs)
-    assert t == {"Cash & Savings": 20.0, "Real Estate": 15.0, "Mutual Funds": 20.0, "Gold & Silver": 10.0}   # unknown names unmapped
-    assert an.bucket_targets({}, _subs([])) == {}
 
 
 def test_plan_actuals_per_main_category():
