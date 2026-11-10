@@ -22,6 +22,7 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
 | **Stocks** | Holdings listed category by category, highest invested first, each with its % of the total invested (invested in it ÷ total portfolio investment). Categories: (India high-quality/risky, index funds, MFs, ETFs, international stable/risky, REITs/InvITs, unlisted, crypto). Record buys, sells and dividends; average cost, % of portfolio, P/L, dividends received and the reason for each holding are calculated. |
 | **Gold & Silver** | Physical purchases with making charges, GST and other charges; valued at the per-gram price you type. |
 | **Real Estate** | Cost, cost per sq ft, extra charges, rent yield. Current value = today's price per sq ft × area. |
+| **Business** | Businesses and trades: what was invested in, how much, money made and money lost so far, running or closed (with the closing date), an optional value now, months running, net result (made − lost), ROI and overall gain / loss. The money invested counts under Business & Trading on the Summary, by the date it started. |
 | **Notes** | Todos / ideas: add, edit, mark done, delete. |
 
 ## Live prices and USD
@@ -49,12 +50,11 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
   and leaves the average price unchanged. Without a typed current price, a holding is valued at cost.
 - **Summary income** = Source-sheet rows + stock dividends (as Dividend/FD) + realised sell P/L (as PL Booking).
   Untick the toggle on the Summary tab if you also type those on the Source sheet.
-- **Ideal plan** (Summary): income is first split into Savings, Investment, Real-Estate, Business & Trading, EMI and Expenses & Leisure (% of income); a second table divides Investment further (a share of Investment, e.g. Investment 40% × Mutual Funds 50% = 20% of income). The main split is shown against what actually happened. The investment types feed the ideal-vs-reality chart.
-- **Ideal** per bucket = income (for the selected period) × the % from that plan. The unallocated % is your expense budget.
-  "Actual % of income" puts reality on the same scale.
+- **Ideal plan** (Summary): income is first split into Savings, Investment, Real-Estate, Business & Trading, EMI and Expenses & Leisure (% of income); a second table divides Investment further (a share of Investment, e.g. Investment 40% × Mutual Funds 50% = 20% of income). The main split is shown against what actually happened ("Plan vs reality"), as a table and a chart; the details of each investment live on the Stocks, Gold & Silver and Real Estate tabs.
+- **Ideal** per category = income (for the selected period) × the % from that plan. The unallocated % is not planned.
 - **Expenses = Income − Investments − Savings − Insurance − Loans.** Insurance is the premiums actually paid in the period; Loans is the cash paid on loans (down payments, instalments, closing payments; instalment dates are worked out from the totals on the Loans tab). Each can be switched off on the Summary.
   Investments are new money put into stocks/funds (buys minus the cost
-  of units sold), gold/silver and property (including charges), by purchase date. Savings are cash, FD, EPF, NPS and
+  of units sold), gold/silver, property and businesses (including charges), by purchase date. Savings are cash, FD, EPF, NPS and
   goal balances; for a single year only entries with a *start date* in that year are attributed to it, so use
   "All time" if you do not fill start dates.
 - **Net worth** = investments (current value) + cash & savings − loans outstanding.

@@ -1125,10 +1125,10 @@ def test_plan_targets_feed_the_ideal_vs_reality_buckets():
 
 def test_plan_actuals_per_main_category():
     flow = {"saved": 100.0, "stocks": 300.0, "metals": 50.0, "real_estate": 70.0, "loans": 40.0, "expense": 200.0,
-            "insurance": 25.0}
+            "insurance": 25.0, "business": 60.0}
     a = an.main_actuals(flow)
     assert a["Savings"] == 100 and a["Investment"] == 350 and a["Real-Estate"] == 70 and a["EMI"] == 40
-    assert a["Expenses & Leisure"] == 225 and a["Business & Trading"] is None
+    assert a["Expenses & Leisure"] == 225 and a["Business & Trading"] == 60
 
 
 def test_plan_validation():
@@ -1162,3 +1162,46 @@ def test_index_funds_etfs_and_gold_silver_are_single_buckets():
     assert b.loc["Index Funds & ETFs", "value"] == 150 and b.loc["Index Funds & ETFs", "invested"] == 120
     assert b.loc["Gold & Silver", "value"] == 50 and b.loc["Gold & Silver", "invested"] == 40
     assert "ETFs" not in b.index and "Gold" not in b.index and "Silver" not in b.index
+
+
+def _biz(rows):
+    cols = db.TABLES["business"][0]
+    return pd.DataFrame([{**{c: None for c in cols}, **r} for r in rows])
+
+
+def test_business_results():
+    b = an.business_frame(_biz([
+        {"name": "Kitchen", "invested": 200000, "money_made": 90000, "money_lost": 30000, "status": "Running",
+         "started_on": "2025-01-01", "current_value": 150000},
+        {"name": "Trade", "invested": 50000, "money_made": 10000, "money_lost": 35000, "status": "Closed",
+         "started_on": "2025-01-01", "closed_on": "2025-07-02"}]))
+    k, t = b.iloc[0], b.iloc[1]
+    assert k["net"] == 60000 and k["roi_pct"] == 30.0
+    assert k["overall"] == 150000 + 60000 - 200000            # value now + net - invested
+    assert t["net"] == -25000 and t["roi_pct"] == -50.0 and t["overall"] == -75000          # net - invested, nothing left in it
+    assert abs(t["months"] - 6.0) < 0.1
+
+
+def test_business_feeds_the_flow_and_main_actuals():
+    biz = _biz([{"name": "A", "invested": 100000, "started_on": "2025-03-01"},
+                {"name": "B", "invested": 40000, "started_on": "2024-03-01"}])
+    empty = pd.DataFrame({"date": [], "invested": [], "total_cost": [], "purchase_date": []})
+    f = an.money_flow(500000, {"all": 0.0, 2025: 0.0}, empty.assign(), empty, db_savings(), 2025, business=biz)
+    assert f["business"] == 100000 and f["invested"] == 100000 and f["expense"] == 400000
+    assert an.main_actuals(f)["Business & Trading"] == 100000
+    assert an.money_flow(500000, {"all": 0.0}, empty, empty, db_savings(), None, business=biz)["business"] == 140000
+
+
+def db_savings():
+    return pd.DataFrame({c: [] for c in db.TABLES["savings"][0]})
+
+
+def test_business_validation():
+    import validation as val
+    ok = _biz([{"name": "A", "invested": 10, "status": "Running", "started_on": "2025-01-01"}])
+    assert val.validate("business", ok, ("name", "invested")) == []
+    bad = _biz([{"name": "B", "invested": 10, "status": "Closed", "started_on": "2025-05-01", "money_lost": -1},
+                {"name": "C", "invested": 0, "status": "Closed", "started_on": "2025-05-01", "closed_on": "2025-01-01"}])
+    text = " ".join(val.validate("business", bad, ("name", "invested")))
+    assert "needs the date it was closed" in text and "cannot be negative" in text and "must be above 0" in text
+    assert "is before" in text

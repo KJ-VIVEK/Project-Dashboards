@@ -1,6 +1,8 @@
 """Pure calculations for the Asset Tracker (no Streamlit, no I/O) so they can be unit-tested."""
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 
 import db
@@ -279,6 +281,22 @@ def real_estate_frame(re_: pd.DataFrame) -> pd.DataFrame:
     r["gain"] = r["value"] - r["total_cost"]
     r["annual_rent"] = r["monthly_rent"].where(r["rent_yielding"].astype(bool), 0.0) * 12
     r["rent_yield_pct"] = (r["annual_rent"] / r["total_cost"].where(r["total_cost"] > 0)).fillna(0.0) * 100
+    return r
+
+
+def business_frame(b: pd.DataFrame) -> pd.DataFrame:
+    """Businesses with their results. Net result = money made - money lost (the capital put in is not a loss);
+    ROI = net result / invested. Overall = value now + made - lost - invested, when a value now is known (running)."""
+    r = b.copy()
+    for c in ("invested", "money_made", "money_lost", "current_value"):
+        r[c] = num(r[c])
+    r["net"] = r["money_made"] - r["money_lost"]
+    r["roi_pct"] = (r["net"] / r["invested"].where(r["invested"] > 0)).fillna(0.0) * 100
+    has_val = r["current_value"].notna() & (r["status"] == "Running")
+    r["overall"] = (r["current_value"].fillna(0.0) + r["net"] - r["invested"]).where(has_val, r["net"] - r["invested"])
+    start = pd.to_datetime(r["started_on"], errors="coerce")
+    end = pd.to_datetime(r["closed_on"], errors="coerce").where(r["status"] == "Closed", pd.Timestamp(date.today()))
+    r["months"] = ((end - start).dt.days / 30.4375).round(1)
     return r
 
 
@@ -718,10 +736,10 @@ def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
 
 
 def main_actuals(flow: dict) -> dict[str, float | None]:
-    """What really went into each main category in the period, from money_flow. Business & Trading cannot be told apart from the
-    other stock buying, so it is None; Expenses includes insurance premiums and leisure (they are not tracked apart)."""
+    """What really went into each main category in the period, from money_flow. Business & Trading is the money put into the
+    businesses on the Business tab; Expenses includes insurance premiums and leisure (they are not tracked apart)."""
     return {"Savings": flow["saved"], "Investment": flow["stocks"] + flow["metals"], "Real-Estate": flow["real_estate"],
-            "Business & Trading": None, "EMI": flow["loans"], "Expenses & Leisure": flow["expense"] + flow["insurance"]}
+            "Business & Trading": flow["business"], "EMI": flow["loans"], "Expenses & Leisure": flow["expense"] + flow["insurance"]}
 
 
 def allocation(buckets: pd.DataFrame, pcts: dict[str, float], income: float) -> pd.DataFrame:
@@ -744,7 +762,7 @@ def net_worth(invest_value: float, savings_total: float, loans_outstanding: floa
 
 def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, real_estate: pd.DataFrame,
                savings: pd.DataFrame, year: int | None = None, insurance_paid: pd.DataFrame | None = None,
-               loan_paid: pd.DataFrame | None = None) -> dict:
+               loan_paid: pd.DataFrame | None = None, business: pd.DataFrame | None = None) -> dict:
     """Where the income went in a period (a year, or all time when year is None).
 
         Expense = Income - Investments - Savings - Insurance - Loans
@@ -768,7 +786,11 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
         sv = sv[in_year(sv["start_date"])]
     saved = float(num(sv["amount"]).sum()) if len(sv) else 0.0
     stocks = float(trades_flow.get(year if year is not None else "all", 0.0))
-    invested = stocks + m + r
+    biz = 0.0
+    if business is not None and len(business):       # capital put into businesses, by the date they started
+        bz = business[in_year(business["started_on"])]
+        biz = float(num(bz["invested"]).sum())
+    invested = stocks + m + r + biz
 
     def paid(frame):
         if frame is None or not len(frame):
@@ -777,7 +799,7 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
         return float(num(f["amount"]).sum())
 
     insurance_total, loans_paid = paid(insurance_paid), paid(loan_paid)
-    return {"income": income_total, "stocks": stocks, "metals": float(m), "real_estate": float(r),
+    return {"income": income_total, "stocks": stocks, "metals": float(m), "real_estate": float(r), "business": biz,
             "invested": invested, "saved": saved, "insurance": insurance_total, "loans": loans_paid,
             "expense": income_total - invested - saved - insurance_total - loans_paid,
             "savings_rate_pct": (invested + saved) / income_total * 100 if income_total else 0.0}

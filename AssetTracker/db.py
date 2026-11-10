@@ -55,6 +55,8 @@ ONE_TIME = "One-time (whole period)"      # one premium that covers the whole st
 FREQUENCY_OPTIONS = list(FREQUENCIES) + [ONE_TIME]
 LOAN_CATEGORIES = ["Good", "Bad", "Worst"]
 LOAN_STATUSES = ["Active", "Closed"]
+BUSINESS_KINDS = ["Own business", "Partnership", "Trading", "Freelance / side work", "Other"]
+BUSINESS_STATUSES = ["Running", "Closed"]
 NOTE_KINDS = ["Todo", "Idea", "Note"]
 
 SCHEMA = """
@@ -107,6 +109,11 @@ CREATE TABLE IF NOT EXISTS real_estate (
     name TEXT NOT NULL, kind TEXT, location TEXT, purchase_date TEXT, cost REAL NOT NULL,
     area_sqft REAL, registration REAL, brokerage REAL, other_charges REAL,
     rent_yielding INTEGER NOT NULL DEFAULT 0, monthly_rent REAL, current_per_sqft REAL, note TEXT);
+CREATE TABLE IF NOT EXISTS business (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL, kind TEXT, what TEXT, started_on TEXT, invested REAL NOT NULL,
+    money_made REAL, money_lost REAL, status TEXT NOT NULL DEFAULT 'Running', closed_on TEXT,
+    current_value REAL, note TEXT);
 CREATE TABLE IF NOT EXISTS target_pcts (bucket TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS target_main (category TEXT PRIMARY KEY, pct REAL NOT NULL CHECK (pct >= 0 AND pct <= 100));
 CREATE TABLE IF NOT EXISTS target_sub (
@@ -141,6 +148,8 @@ TABLES: dict[str, tuple[list[str], set[str], set[str]]] = {
     "real_estate": (["name", "kind", "location", "purchase_date", "cost", "area_sqft", "registration", "brokerage",
                      "other_charges", "rent_yielding", "monthly_rent", "current_per_sqft", "note"],
                     {"purchase_date"}, {"rent_yielding"}),
+    "business": (["name", "kind", "what", "started_on", "invested", "money_made", "money_lost", "status", "closed_on",
+                  "current_value", "note"], {"started_on", "closed_on"}, set()),
     "notes": (["title", "body", "kind", "done", "created", "updated"], set(), {"done"}),
 }
 
