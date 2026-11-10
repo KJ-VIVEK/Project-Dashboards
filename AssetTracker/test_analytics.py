@@ -1099,7 +1099,7 @@ def _subs(rows):
 
 
 def test_plan_second_table_is_a_share_of_the_first():
-    main = {"Savings": 20.0, "Investment": 40.0, "EMI": 10.0, "Expenses": 25.0, "Leisure": 5.0}
+    main = {"Savings": 20.0, "Investment": 40.0, "EMI": 10.0, "Expenses & Leisure": 30.0}
     subs = _subs([["Investment", "Mutual Funds", 50.0], ["Investment", "Gold", 30.0], ["Investment", "ETFs", 10.0]])
     plan = an.target_plan(main, subs, 100000.0)
     inv = plan[plan["category"] == "Investment"].set_index(plan[plan["category"] == "Investment"]["sub"].fillna("(main)"))
@@ -1128,7 +1128,7 @@ def test_plan_actuals_per_main_category():
             "insurance": 25.0}
     a = an.main_actuals(flow)
     assert a["Savings"] == 100 and a["Investment"] == 350 and a["Real-Estate"] == 70 and a["EMI"] == 40
-    assert a["Expenses"] == 225 and a["Trading"] is None and a["Leisure"] is None
+    assert a["Expenses & Leisure"] == 225 and a["Trading"] is None
 
 
 def test_plan_validation():
@@ -1138,7 +1138,7 @@ def test_plan_validation():
     assert any("add up to 110% of income" in x for x in over)
     bad_sub = val.validate_targets({"Investment": 40.0}, _subs([["Investment", "Gold", 70.0], ["Investment", "ETFs", 40.0]]))
     assert any("add up to 110% of Investment" in x for x in bad_sub)
-    msgs = val.validate_targets({}, _subs([["Investment", "Gold", 10.0], ["Investment", "gold", 10.0], ["Leisure", "", 5.0],
+    msgs = val.validate_targets({}, _subs([["Investment", "Gold", 10.0], ["Investment", "gold", 10.0], ["Expenses & Leisure", "", 5.0],
                                           [None, "x", 5.0], ["EMI", "Good", -5.0]]))
     text = " ".join(msgs)
     assert "repeats row 1" in text and "needs a name" in text and "choose a main category" in text and "between 0 and 100" in text
@@ -1147,8 +1147,8 @@ def test_plan_validation():
 def test_plan_is_stored_and_replaced(path):
     db.init_db(path)
     db.set_targets({"Savings": 20.0, "Investment": 0.0, "Bogus": 10.0},
-                   _subs([["Investment", "Gold", 50.0], ["Investment", " ", 10.0], ["Nope", "x", 5.0], ["Leisure", "Travel", 0.0]]), path)
+                   _subs([["Investment", "Gold", 50.0], ["Investment", " ", 10.0], ["Nope", "x", 5.0], ["Expenses & Leisure", "Travel", 0.0]]), path)
     assert db.get_target_main(path) == {"Savings": 20.0}                       # zeros, blanks and unknown rows are dropped
     assert db.get_target_sub(path)[["category", "sub", "pct"]].values.tolist() == [["Investment", "Gold", 50.0]]
-    db.set_targets({"Expenses": 30.0}, _subs([]), path)                         # saving again replaces everything
-    assert db.get_target_main(path) == {"Expenses": 30.0} and db.get_target_sub(path).empty
+    db.set_targets({"Expenses & Leisure": 30.0}, _subs([]), path)                         # saving again replaces everything
+    assert db.get_target_main(path) == {"Expenses & Leisure": 30.0} and db.get_target_sub(path).empty

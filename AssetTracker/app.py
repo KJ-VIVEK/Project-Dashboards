@@ -384,15 +384,15 @@ with tabs[0]:
     plan = an.target_plan(plan_main, plan_subs, income_total)
     m_sum = sum(plan_main.values())
     grow = sum(plan_main.get(k, 0.0) for k in ("Savings", "Investment", "Real-Estate", "Trading"))
-    spend = sum(plan_main.get(k, 0.0) for k in ("EMI", "Expenses", "Leisure"))
+    spend = sum(plan_main.get(k, 0.0) for k in ("EMI", "Expenses & Leisure"))
     c = st.columns(4)
     kpi(c[0], f"Income ({period})", income_total)
     kpi(c[1], "Planned to save + invest", f"{grow:.1f}% of income", help="Savings + Investment + Real-Estate + Trading")
-    kpi(c[2], "Planned EMI + expenses + leisure", f"{spend:.1f}% of income")
+    kpi(c[2], "Planned EMI + expenses & leisure", f"{spend:.1f}% of income")
     kpi(c[3], "Not allocated", f"{100 - m_sum:.1f}% of income")
     if not plan_main:
         st.info("No ideal plan yet. Open “Set ideal values” below to split your income into Savings, Investment, "
-                "Real-Estate, Trading, EMI, Expenses and Leisure, and then divide each one further.")
+                "Real-Estate, Trading, EMI and Expenses & Leisure, and then divide each one further.")
     else:
         actual = an.main_actuals(flow)
         rows = []

@@ -35,11 +35,11 @@ DEFAULT_PURITY = {"Gold": "24K", "Silver": "999"}
 DEFAULT_PREMIUM = {"Gold": 6.0, "Silver": 6.0}
 SAVINGS_BUCKET = "Cash & Savings"
 # the ideal plan: income is first split into these main categories, each of which can be divided further
-MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Trading", "EMI", "Expenses", "Leisure"]
+MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Trading", "EMI", "Expenses & Leisure"]
 INVESTMENT_PLAN_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver"]
 SUB_SUGGESTIONS = {   # starting points for the second table; the user can rename, delete and add rows
     "Savings": None, "Investment": INVESTMENT_PLAN_BUCKETS, "Real-Estate": ["Real Estate"], "Trading": [],
-    "EMI": ["Good", "Bad", "Worst"], "Expenses": [], "Leisure": []}
+    "EMI": ["Good", "Bad", "Worst"], "Expenses & Leisure": []}
 INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
 # kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
