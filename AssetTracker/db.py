@@ -36,11 +36,13 @@ DEFAULT_PREMIUM = {"Gold": 6.0, "Silver": 6.0}
 SAVINGS_BUCKET = "Cash & Savings"
 # the ideal plan: income is first split into these main categories, each of which can be divided further
 MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Trading", "EMI", "Expenses & Leisure"]
-INVESTMENT_PLAN_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver"]
+# in the ideal plan and its chart, index funds and ETFs are one type, and gold and silver are one type
+PLAN_GROUP = {"Index Funds": "Index Funds & ETFs", "ETFs": "Index Funds & ETFs", "Gold": "Gold & Silver", "Silver": "Gold & Silver"}
+INVESTMENT_PLAN_BUCKETS = list(dict.fromkeys(PLAN_GROUP.get(c, c) for c in SECURITY_CATEGORIES + METALS))
 SUB_CATEGORIES = ["Investment"]   # only these can be divided further; the rest are a single % of income
 SUB_SUGGESTIONS = {   # starting points for the second table; the user can rename, delete and add rows
     "Investment": INVESTMENT_PLAN_BUCKETS}
-INVESTMENT_BUCKETS = SECURITY_CATEGORIES + ["Gold", "Silver", "Real Estate", SAVINGS_BUCKET]
+INVESTMENT_BUCKETS = INVESTMENT_PLAN_BUCKETS + ["Real Estate", SAVINGS_BUCKET]
 CURRENCIES = ["INR", "USD"]
 # kinds that earn interest (show "Interest earned") and kinds that run for a fixed term (always need start and end dates)
 INTEREST_KINDS = ["FD", "RD", "Savings Account"]

@@ -1117,9 +1117,9 @@ def test_plan_second_table_is_a_share_of_the_first():
 
 def test_plan_targets_feed_the_ideal_vs_reality_buckets():
     main = {"Savings": 20.0, "Investment": 40.0, "Real-Estate": 15.0}
-    subs = _subs([["Investment", "Mutual Funds", 50.0], ["Investment", "Gold", 25.0], ["Investment", "My own thing", 25.0]])
+    subs = _subs([["Investment", "Mutual Funds", 50.0], ["Investment", "Gold & Silver", 15.0], ["Investment", "Silver", 10.0], ["Investment", "My own thing", 25.0]])
     t = an.bucket_targets(main, subs)
-    assert t == {"Cash & Savings": 20.0, "Real Estate": 15.0, "Mutual Funds": 20.0, "Gold": 10.0}   # unknown names unmapped
+    assert t == {"Cash & Savings": 20.0, "Real Estate": 15.0, "Mutual Funds": 20.0, "Gold & Silver": 10.0}   # unknown names unmapped
     assert an.bucket_targets({}, _subs([])) == {}
 
 
@@ -1152,3 +1152,13 @@ def test_plan_is_stored_and_replaced(path):
     assert db.get_target_sub(path)[["category", "sub", "pct"]].values.tolist() == [["Investment", "Gold", 50.0]]
     db.set_targets({"Expenses & Leisure": 30.0}, _subs([]), path)                         # saving again replaces everything
     assert db.get_target_main(path) == {"Expenses & Leisure": 30.0} and db.get_target_sub(path).empty
+
+
+def test_index_funds_etfs_and_gold_silver_are_single_buckets():
+    pos = pd.DataFrame({"category": ["Index Funds", "ETFs"], "value": [100.0, 50.0], "invested": [80.0, 40.0]})
+    met = pd.DataFrame({"metal": ["Gold", "Silver"], "value": [30.0, 20.0], "invested": [25.0, 15.0]})
+    re_ = pd.DataFrame({"value": [], "total_cost": []})
+    b = an.bucket_values(pos, met, re_, 0.0).set_index("bucket")
+    assert b.loc["Index Funds & ETFs", "value"] == 150 and b.loc["Index Funds & ETFs", "invested"] == 120
+    assert b.loc["Gold & Silver", "value"] == 50 and b.loc["Gold & Silver", "invested"] == 40
+    assert "ETFs" not in b.index and "Gold" not in b.index and "Silver" not in b.index
