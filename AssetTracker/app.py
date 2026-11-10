@@ -1701,8 +1701,6 @@ with tabs[7]:
             "note": "Note"}, ("name", "cost"), "real_estate")
 
 # ================================================================== 9. BUSINESS
-BIZ_COLUMNS = ["name", "kind", "what", "started_on", "invested", "money_made", "money_lost", "status", "closed_on",
-               "current_value", "note"]
 with tabs[8]:
     run = biz_f[biz_f["status"] == "Running"]
     c = st.columns(5)

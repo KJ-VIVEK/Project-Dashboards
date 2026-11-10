@@ -723,43 +723,11 @@ def target_plan(main: dict, subs: pd.DataFrame, income: float) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["category", "sub", "pct_of_category", "pct_of_income", "amount"])
 
 
-def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
-    """The ideal % of income for each holding bucket, taken from the plan (for the ideal-vs-reality chart):
-    Savings -> Cash & Savings, Real-Estate -> Real Estate, and each Investment sub-category named like a bucket
-    (a stock category, "Index Funds & ETFs" or "Gold & Silver") -> that bucket."""
-    out: dict[str, float] = {}
-    if main.get("Savings"):
-        out[db.SAVINGS_BUCKET] = float(main["Savings"])
-    if main.get("Real-Estate"):
-        out["Real Estate"] = float(main["Real-Estate"])
-    inv = float(main.get("Investment", 0.0) or 0.0)
-    if inv and len(subs):
-        for _, r in subs[subs["category"] == "Investment"].iterrows():
-            name = db.PLAN_GROUP.get(r["sub"], r["sub"])      # older rows named ETFs / Gold still count
-            if name in db.INVESTMENT_PLAN_BUCKETS:
-                out[name] = out.get(name, 0.0) + inv * float(r["pct"] or 0.0) / 100
-    return out
-
-
 def main_actuals(flow: dict) -> dict[str, float | None]:
     """What really went into each main category in the period, from money_flow. Business & Trading is the money put into the
     businesses on the Business tab; Expenses includes insurance premiums and leisure (they are not tracked apart)."""
     return {"Savings": flow["saved"], "Investment": flow["stocks"] + flow["metals"] + flow["pf"], "Real-Estate": flow["real_estate"],
             "Business & Trading": flow["business"], "EMI": flow["loans"], "Expenses & Leisure": flow["expense"] + flow["insurance"]}
-
-
-def allocation(buckets: pd.DataFrame, pcts: dict[str, float], income: float) -> pd.DataFrame:
-    """Ideal vs reality per bucket. Ideal = income x the % the user chose for that bucket.
-
-    actual_pct is reality as a % of that same income, so it is directly comparable with the ideal %.
-    gap = ideal - reality (positive: room left to invest, negative: over target).
-    """
-    a = buckets.copy()
-    a["target_pct"] = a["bucket"].map(pcts).fillna(0.0)
-    a["target"] = income * a["target_pct"] / 100
-    a["actual_pct"] = a["value"] / income * 100 if income else 0.0
-    a["gap"] = a["target"] - a["value"]
-    return a
 
 
 def net_worth(invest_value: float, savings_total: float, loans_outstanding: float) -> float:
@@ -874,12 +842,6 @@ def memo_pivot(income: pd.DataFrame, year: int | None, by="month", col="other_de
         s = amt[dt.dt.year == year].groupby(dt[dt.dt.year == year].dt.month).sum()
         return s.reindex(range(1, 13), fill_value=0.0)
     return amt[dt.notna()].groupby(dt[dt.notna()].dt.year).sum()
-
-
-def rsu_value(units, usd_price, usd_inr) -> dict:
-    """RSUs vested at their buy (vest-day) value: units x USD price per share, converted at the USD->INR rate."""
-    usd = float(units or 0) * float(usd_price or 0)
-    return {"usd": usd, "inr": usd * float(usd_inr or 0)}
 
 
 def average_growth(yoy: pd.Series) -> float | None:
