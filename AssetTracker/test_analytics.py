@@ -1110,7 +1110,7 @@ def test_plan_second_table_is_a_share_of_the_first():
     # the sub-categories (with the undivided rest) always add back up to the main category
     assert round(inv.drop("(main)")["pct_of_income"].sum(), 6) == 40
     assert round(inv.drop("(main)")["amount"].sum(), 6) == 40000
-    assert "Trading" not in set(plan["category"]) and "Real-Estate" not in set(plan["category"])   # nothing set: left out
+    assert "Business & Trading" not in set(plan["category"]) and "Real-Estate" not in set(plan["category"])   # nothing set: left out
     mains = plan[plan["sub"].isna()]
     assert round(mains["pct_of_income"].sum(), 6) == 100
 
@@ -1128,7 +1128,7 @@ def test_plan_actuals_per_main_category():
             "insurance": 25.0}
     a = an.main_actuals(flow)
     assert a["Savings"] == 100 and a["Investment"] == 350 and a["Real-Estate"] == 70 and a["EMI"] == 40
-    assert a["Expenses & Leisure"] == 225 and a["Trading"] is None
+    assert a["Expenses & Leisure"] == 225 and a["Business & Trading"] is None
 
 
 def test_plan_validation():

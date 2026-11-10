@@ -49,7 +49,7 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
   and leaves the average price unchanged. Without a typed current price, a holding is valued at cost.
 - **Summary income** = Source-sheet rows + stock dividends (as Dividend/FD) + realised sell P/L (as PL Booking).
   Untick the toggle on the Summary tab if you also type those on the Source sheet.
-- **Ideal plan** (Summary): income is first split into Savings, Investment, Real-Estate, Trading, EMI and Expenses & Leisure (% of income); a second table divides Investment further (a share of Investment, e.g. Investment 40% × Mutual Funds 50% = 20% of income). The main split is shown against what actually happened. The investment types feed the ideal-vs-reality chart.
+- **Ideal plan** (Summary): income is first split into Savings, Investment, Real-Estate, Business & Trading, EMI and Expenses & Leisure (% of income); a second table divides Investment further (a share of Investment, e.g. Investment 40% × Mutual Funds 50% = 20% of income). The main split is shown against what actually happened. The investment types feed the ideal-vs-reality chart.
 - **Ideal** per bucket = income (for the selected period) × the % from that plan. The unallocated % is your expense budget.
   "Actual % of income" puts reality on the same scale.
 - **Expenses = Income − Investments − Savings − Insurance − Loans.** Insurance is the premiums actually paid in the period; Loans is the cash paid on loans (down payments, instalments, closing payments; instalment dates are worked out from the totals on the Loans tab). Each can be switched off on the Summary.
