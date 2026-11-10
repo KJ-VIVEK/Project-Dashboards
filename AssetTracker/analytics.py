@@ -562,13 +562,16 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
 
 
 def loan_payments(loans: pd.DataFrame, today=None) -> pd.DataFrame:
-    """Cash paid on loans, one row per payment, for the Summary's "where the income went".
+    """What borrowing cost, one row per payment, for the Summary's "where the income went".
 
+    Only the cost of the loan counts: the interest and the other charges (processing fee, foreclosure charges). The
+    down payment and the principal repaid are not loan costs: the money bought something (an asset that is recorded on
+    its own tab, or spending that is already part of what is left over).
     The loan sheet records totals, not every instalment, so the dates are worked out:
-      * down payment on the start date;
-      * instalments one a month from the month after the start date (as many as were paid, or the whole months elapsed
-        for a running loan, never past the planned tenure), each the average recorded instalment or the EMI;
-      * for a closed loan, the closing payment on the closing date.
+      * the interest paid (recorded, else the calculator's figure) is spread over the instalments, one a month from the
+        month after the start date (as many as were paid, or the whole months elapsed for a running loan, never past
+        the planned tenure and never after the loan was closed);
+      * other charges fall on the closing date of a closed loan (they are part of the closing payment), else the start.
     Columns: date, loan, kind, amount."""
     from datetime import date as _date
     today = today or _date.today()
@@ -583,27 +586,30 @@ def loan_payments(loans: pd.DataFrame, today=None) -> pd.DataFrame:
             continue
         closed = r["status"] == "Closed"
         stop = _date_or_none(r.get("closed_date")) if closed else None
-        if pd.notna(r["down_payment"]) and r["down_payment"] > 0 and start <= today:
-            rows.append((start, name, "Down payment", float(r["down_payment"])))
         n = r["installments_paid"]
         if pd.isna(n):
             n = r["tenure_months"] if closed else whole_months(start, today)
             if not closed and pd.notna(r["planned_months"]):
                 n = min(n or 0, r["planned_months"])
         n = int(n) if n is not None and pd.notna(n) and n > 0 else 0
-        if pd.notna(r["emi_paid"]) and r["installments_paid"] and r["installments_paid"] > 0:
-            per = r["emi_paid"] / r["installments_paid"]
-        else:
-            per = r["emi"] if (pd.notna(r["emi"]) and r["emi"] > 0) else r["emi_std"]
-        if n and pd.notna(per) and per > 0:
+        interest = r["interest_paid"]                 # recorded, else the calculator's figure for a closed loan
+        if pd.isna(interest) and n:                   # a running loan: the calculator's interest after n instalments
+            res = emi_schedule(r["principal"], r["interest_rate"], r["planned_months"], n)
+            interest = res["interest_paid"] if res else float("nan")   # interest accrued over those n months
+        if pd.notna(interest) and interest > 0:
+            dates = []
             for k in range(1, n + 1):
                 d = _add_months(start, k)
-                if stop and d > stop:        # never after the loan was closed
-                    d = stop
+                dates.append(min(d, stop) if stop and d > stop else d)
+            if not dates:
+                dates = [stop or start]
+            for d in dates:
                 if d <= today:
-                    rows.append((d, name, "Instalment", float(per)))
-        if closed and pd.notna(r["closing_payment"]) and r["closing_payment"] > 0 and stop and stop <= today:
-            rows.append((stop, name, "Closing payment", float(r["closing_payment"])))
+                    rows.append((d, name, "Interest", float(interest) / len(dates)))
+        if pd.notna(r["other_charges"]) and r["other_charges"] > 0:
+            d = stop if (closed and stop) else start
+            if d <= today:
+                rows.append((d, name, "Other charges", float(r["other_charges"])))
     return pd.DataFrame(rows, columns=cols)
 
 

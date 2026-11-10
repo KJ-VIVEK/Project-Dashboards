@@ -52,7 +52,7 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
   Untick the toggle on the Summary tab if you also type those on the Source sheet.
 - **Ideal plan** (Summary): income is first split into Savings, Investment, Real-Estate, Business & Trading, EMI and Expenses & Leisure (% of income); a second table divides Investment further (a share of Investment, e.g. Investment 40% × Mutual Funds 50% = 20% of income). The main split is shown against what actually happened ("Plan vs reality"), as a table and a chart; the details of each investment live on the Stocks, Gold & Silver and Real Estate tabs.
 - **Ideal** per category = income (for the selected period) × the % from that plan. The unallocated % is not planned.
-- **Expenses = Income − Investments − Savings − Insurance − Loans.** Insurance is the premiums actually paid in the period; Loans is the cash paid on loans (down payments, instalments, closing payments; instalment dates are worked out from the totals on the Loans tab). Each can be switched off on the Summary.
+- **Expenses = Income − Investments − Savings − Insurance − Loans.** Insurance is the premiums actually paid in the period; Loans is what borrowing cost: the interest paid and other charges, not the loan amount or the down payment (interest dates are worked out from the totals on the Loans tab). Each can be switched off on the Summary.
   Investments are new money put into stocks/funds (buys minus the cost
   of units sold), gold/silver, property and businesses (including charges), by purchase date. Savings are cash, FD, EPF, NPS and
   goal balances; for a single year only entries with a *start date* in that year are attributed to it, so use
