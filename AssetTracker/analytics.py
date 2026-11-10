@@ -543,6 +543,52 @@ def loans_frame(loans: pd.DataFrame) -> pd.DataFrame:
     return l
 
 
+def loan_payments(loans: pd.DataFrame, today=None) -> pd.DataFrame:
+    """Cash paid on loans, one row per payment, for the Summary's "where the income went".
+
+    The loan sheet records totals, not every instalment, so the dates are worked out:
+      * down payment on the start date;
+      * instalments one a month from the month after the start date (as many as were paid, or the whole months elapsed
+        for a running loan, never past the planned tenure), each the average recorded instalment or the EMI;
+      * for a closed loan, the closing payment on the closing date.
+    Columns: date, loan, kind, amount."""
+    from datetime import date as _date
+    today = today or _date.today()
+    cols = ["date", "loan", "kind", "amount"]
+    if loans is None or loans.empty:
+        return pd.DataFrame(columns=cols)
+    lf = loans_frame(loans)
+    rows = []
+    for _, r in lf.iterrows():
+        start, name = _date_or_none(r["start_date"]), r["name"]
+        if start is None:
+            continue
+        closed = r["status"] == "Closed"
+        stop = _date_or_none(r.get("closed_date")) if closed else None
+        if pd.notna(r["down_payment"]) and r["down_payment"] > 0 and start <= today:
+            rows.append((start, name, "Down payment", float(r["down_payment"])))
+        n = r["installments_paid"]
+        if pd.isna(n):
+            n = r["tenure_months"] if closed else whole_months(start, today)
+            if not closed and pd.notna(r["planned_months"]):
+                n = min(n or 0, r["planned_months"])
+        n = int(n) if n is not None and pd.notna(n) and n > 0 else 0
+        if pd.notna(r["emi_paid"]) and r["installments_paid"] and r["installments_paid"] > 0:
+            per = r["emi_paid"] / r["installments_paid"]
+        else:
+            per = r["emi"] if (pd.notna(r["emi"]) and r["emi"] > 0) else r["emi_std"]
+        if n and pd.notna(per) and per > 0:
+            for k in range(1, n + 1):
+                d = _add_months(start, k)
+                if stop and d > stop:        # never after the loan was closed
+                    d = stop
+                if d <= today:
+                    rows.append((d, name, "Instalment", float(per)))
+        if closed and pd.notna(r["closing_payment"]) and r["closing_payment"] > 0 and stop and stop <= today:
+            rows.append((stop, name, "Closing payment", float(r["closing_payment"])))
+    return pd.DataFrame(rows, columns=cols)
+
+
 def active_savings(sv: pd.DataFrame) -> pd.DataFrame:
     """Savings rows that count today: an FD (or other deposit) marked temporarily closed is taken out of its category
     until it is added back, so it is left out of every total."""
@@ -620,10 +666,14 @@ def net_worth(invest_value: float, savings_total: float, loans_outstanding: floa
 
 
 def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, real_estate: pd.DataFrame,
-               savings: pd.DataFrame, year: int | None = None) -> dict:
+               savings: pd.DataFrame, year: int | None = None, insurance_paid: pd.DataFrame | None = None,
+               loan_paid: pd.DataFrame | None = None) -> dict:
     """Where the income went in a period (a year, or all time when year is None).
 
-        Expense = Income - Investments - Savings
+        Expense = Income - Investments - Savings - Insurance - Loans
+
+    Insurance = premiums actually paid in the period (insurance_paid: date, amount). Loans = cash paid on loans in the
+    period (loan_paid: date, amount): down payments, instalments and closing payments.
 
     Investments = new money put into assets in the period: cost of stock/fund buys minus the cost basis of units
     sold (so recycled capital is not counted twice; profit from sells is already in income), gold/silver bought
@@ -642,8 +692,17 @@ def money_flow(income_total: float, trades_flow: dict, metals: pd.DataFrame, rea
     saved = float(num(sv["amount"]).sum()) if len(sv) else 0.0
     stocks = float(trades_flow.get(year if year is not None else "all", 0.0))
     invested = stocks + m + r
+
+    def paid(frame):
+        if frame is None or not len(frame):
+            return 0.0
+        f = frame[in_year(frame["date"])]
+        return float(num(f["amount"]).sum())
+
+    insurance_total, loans_paid = paid(insurance_paid), paid(loan_paid)
     return {"income": income_total, "stocks": stocks, "metals": float(m), "real_estate": float(r),
-            "invested": invested, "saved": saved, "expense": income_total - invested - saved,
+            "invested": invested, "saved": saved, "insurance": insurance_total, "loans": loans_paid,
+            "expense": income_total - invested - saved - insurance_total - loans_paid,
             "savings_rate_pct": (invested + saved) / income_total * 100 if income_total else 0.0}
 
 

@@ -245,6 +245,7 @@ insurance = db.get_table("insurance")
 ins_rev = db.get_table("insurance_revisions")
 prem_paid = an.insurance_payments(insurance, ins_rev)
 loans = db.get_table("loans")
+loan_paid = an.loan_payments(loans)
 metals = db.get_table("metals")
 real_estate = db.get_table("real_estate")
 notes = db.get_table("notes")
@@ -303,11 +304,14 @@ with tabs[0]:
     auto = st.toggle("Include dividends and realised profit/loss recorded on the Stocks tab", value=True,
                      help="Dividends count as Dividend/FD; sells count as PL Booking. Turn off if you also type "
                           "them on the Source sheet, to avoid double counting.", key="sum_auto")
-    prem_on = st.toggle("Subtract insurance premiums paid (from the Insurance tab)", value=True, key="sum_prem",
-                        help="Each premium is subtracted in the month you paid it (a yearly premium whole, on its start "
-                             "date and each anniversary; a monthly one every month), like Taxes Paid.")
-    inc = an.income_frame(income, dividends, realised, auto, prem_paid if prem_on else None, usd_inr=fx,
-                         extra_tax_pct=extra_pct)
+    prem_on = st.toggle("Count insurance premiums paid as spending (from the Insurance tab)", value=True, key="sum_prem",
+                        help="Premiums are counted in the month you paid them (a yearly premium whole, on its start "
+                             "date and each anniversary; a monthly one every month) under “Where the income went”.")
+    loans_on = st.toggle("Count loan payments as spending (from the Loans tab)", value=True, key="sum_loans",
+                         help="Down payments, instalments (one a month from the month after the start date) and closing "
+                              "payments, under “Where the income went”. Instalment dates are worked out from the totals "
+                              "on the Loans tab.")
+    inc = an.income_frame(income, dividends, realised, auto, None, usd_inr=fx, extra_tax_pct=extra_pct)
     years = sorted(inc["year"].unique(), reverse=True)
     period = st.selectbox("Period", ["All time"] + years, key="sum_year",
                           help="Drives the income chart, 'where the income went' and the ideal values below.")
@@ -341,30 +345,38 @@ with tabs[0]:
     # ---- where the income went:  Expense = Income - Investments - Savings
     st.subheader("Where the income went")
     flow = an.money_flow(income_total, an.stock_net_invested(trades, securities, realised, fx),
-                         metals_f, re_f, savings, yr)
-    c = st.columns(5)
+                         metals_f, re_f, savings, yr, prem_paid if prem_on else None, loan_paid if loans_on else None)
+    c = st.columns(6)
     kpi(c[0], "Income", flow["income"])
     kpi(c[1], "Invested", flow["invested"], help="New money put into stocks/funds, gold & silver and property")
     kpi(c[2], "Saved", flow["saved"], help="Cash, FD, EPF, NPS and goal balances" + (
         "; for a single year, only entries with a start date in it" if yr else ""))
-    kpi(c[3], "Expenses (left over)", flow["expense"], help="Income − Invested − Saved")
-    kpi(c[4], "Invested + saved", f"{flow['savings_rate_pct']:.0f}% of income")
-    st.caption("**Expenses = Income − Investments − Savings.** Whatever you earned and did not invest or save is "
-               "treated as spent. Investments are net of units sold (recycled capital is not counted twice).")
+    kpi(c[3], "Insurance", flow["insurance"], help="Premiums actually paid in the period (Insurance tab)")
+    kpi(c[4], "Loans", flow["loans"], help="Down payments, instalments and closing payments in the period (Loans tab)")
+    kpi(c[5], "Expenses (left over)", flow["expense"], help="Income − Invested − Saved − Insurance − Loans")
+    st.caption(f"**Expenses = Income − Investments − Savings − Insurance − Loans.** Whatever you earned and did not "
+               f"invest, save, put into insurance or pay on loans is treated as spent. Invested + saved is "
+               f"{flow['savings_rate_pct']:.0f}% of income. Investments are net of units sold (recycled capital is not "
+               "counted twice).")
     if flow["expense"] < 0:
-        st.warning("Invested + saved is more than the income recorded for this period. Add the missing income on "
-                   "the Source tab, or pick 'All time'.")
+        st.warning("Invested, saved, insurance and loan payments add up to more than the income recorded for this period. "
+                   "Add the missing income on the Source tab, or pick 'All time'.")
     if flow["income"] > 0:
-        labels = ["Income", "Investments", "Saved", "Expenses", "Stocks & funds", "Gold & silver", "Real estate"]
-        links = [(0, 1, flow["invested"]), (0, 2, flow["saved"]), (0, 3, max(flow["expense"], 0)),
-                 (1, 4, flow["stocks"]), (1, 5, flow["metals"]), (1, 6, flow["real_estate"])]
+        labels = ["Income", "Investments", "Saved", "Insurance", "Loans", "Expenses", "Stocks & funds", "Gold & silver",
+                  "Real estate"]
+        links = [(0, 1, flow["invested"]), (0, 2, flow["saved"]), (0, 3, flow["insurance"]), (0, 4, flow["loans"]),
+                 (0, 5, max(flow["expense"], 0)),
+                 (1, 6, flow["stocks"]), (1, 7, flow["metals"]), (1, 8, flow["real_estate"])]
         links = [l for l in links if l[2] > 0]
         fig = go.Figure(go.Sankey(
-            node=dict(label=labels, pad=18, thickness=14, color=[REAL, "#6250d6", "#1baf7a", "#eb6834",
-                                                                  "#a396ea", "#eda100", "#8c5a3c"]),
+            node=dict(label=labels, pad=18, thickness=14, color=[REAL, "#6250d6", "#1baf7a", "#c2185b", "#d6403a",
+                                                                  "#eb6834", "#a396ea", "#eda100", "#8c5a3c"]),
             link=dict(source=[l[0] for l in links], target=[l[1] for l in links], value=[l[2] for l in links],
                       color="rgba(137,135,129,0.25)")))
-        show(style(fig, "Income → investments, savings and expenses", height=300))
+        show(style(fig, "Income → investments, savings, insurance, loans and expenses", height=340))
+        if flow["loans"] and loan_paid is not None and len(loan_paid):
+            st.caption("Loan payments are partly estimated: the Loans tab stores totals, so instalments are placed one "
+                       "a month from the month after the start date.")
 
     # ---- ideal vs reality:  Ideal = Income x %
     st.subheader("Investments: ideal vs reality")

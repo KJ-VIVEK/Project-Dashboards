@@ -51,7 +51,8 @@ ASSET_DB=data/demo.db ../.venv/bin/streamlit run app.py
   Untick the toggle on the Summary tab if you also type those on the Source sheet.
 - **Ideal** per bucket = income (for the selected period) × the % you set. The unallocated % is your expense budget.
   "Actual % of income" puts reality on the same scale.
-- **Expenses = Income − Investments − Savings.** Investments are new money put into stocks/funds (buys minus the cost
+- **Expenses = Income − Investments − Savings − Insurance − Loans.** Insurance is the premiums actually paid in the period; Loans is the cash paid on loans (down payments, instalments, closing payments; instalment dates are worked out from the totals on the Loans tab). Each can be switched off on the Summary.
+  Investments are new money put into stocks/funds (buys minus the cost
   of units sold), gold/silver and property (including charges), by purchase date. Savings are cash, FD, EPF, NPS and
   goal balances; for a single year only entries with a *start date* in that year are attributed to it, so use
   "All time" if you do not fill start dates.

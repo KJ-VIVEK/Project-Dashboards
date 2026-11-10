@@ -1035,3 +1035,40 @@ def test_savings_validation_dates_goal_and_interest():
     assert not val.validate("savings", pd.DataFrame([{**base, "kind": "Short-term Goal", "target": 5000.0}]))
     assert any("Interest earned" in x for x in val.validate("savings", pd.DataFrame(
         [{**base, "kind": "FD", "start_date": date(2025, 1, 1), "maturity_date": date(2026, 1, 1), "interest_earned": -5.0}])))
+
+
+# ---- Summary: where the income went, with insurance and loans ----------------------------------------------
+def test_loan_payments_for_the_closed_ktm_loan_add_up_to_what_was_paid():
+    lp = an.loan_payments(pd.DataFrame([KTM]), today=date(2026, 11, 10))
+    by = lp.groupby("kind")["amount"].agg(["size", "sum"])
+    assert by.loc["Down payment", "sum"] == 150000
+    assert by.loc["Instalment", "size"] == 8 and round(by.loc["Instalment", "sum"], 2) == 54756 * 1   # 8 x 54,756 / 8 each
+    assert by.loc["Closing payment", "sum"] == 258466
+    assert round(lp["amount"].sum(), 2) == 150000 + 54756 + 258466 == 463222
+    assert lp["date"].min() == KTM["start_date"] and lp["date"].max() == KTM["closed_date"]
+    inst = lp[lp["kind"] == "Instalment"]["date"]
+    assert inst.min() == date(2023, 12, 30) and inst.max() <= KTM["closed_date"]      # from the month after the start
+
+
+def test_loan_payments_for_a_running_loan_use_the_emi_and_elapsed_months():
+    run = dict(KTM, status="Active", closed_date=None, outstanding=150000.0, installments_paid=None, emi_paid=None,
+               emi_interest=None, closing_payment=None, emi=5000.0, down_payment=None,
+               start_date=date(2026, 1, 15), end_date=date(2027, 1, 15))
+    lp = an.loan_payments(pd.DataFrame([run]), today=date(2026, 6, 20))
+    assert len(lp) == 5 and (lp["amount"] == 5000).all() and lp["date"].max() == date(2026, 6, 15)   # Feb..Jun
+    assert an.loan_payments(pd.DataFrame(), today=date(2026, 6, 20)).empty
+
+
+def test_money_flow_takes_insurance_and_loans_out_of_expenses():
+    none_m = pd.DataFrame(columns=["date", "invested"])
+    none_r = pd.DataFrame(columns=["purchase_date", "total_cost"])
+    sv = pd.DataFrame({"kind": ["FD"], "name": ["A"], "amount": [1000.0], "start_date": [date(2025, 1, 1)]})
+    ins = pd.DataFrame({"date": [date(2025, 3, 1), date(2026, 3, 1)], "amount": [300.0, 400.0]})
+    loans = pd.DataFrame({"date": [date(2025, 5, 1), date(2025, 6, 1), date(2026, 5, 1)], "amount": [500.0, 500.0, 700.0]})
+    y25 = an.money_flow(10000, {2025: 2000.0, "all": 2000.0}, none_m, none_r, sv, 2025, ins, loans)
+    assert y25["insurance"] == 300 and y25["loans"] == 1000
+    assert y25["expense"] == 10000 - 2000 - 1000 - 300 - 1000 == 5700
+    allt = an.money_flow(10000, {"all": 2000.0}, none_m, none_r, sv, None, ins, loans)
+    assert allt["insurance"] == 700 and allt["loans"] == 1700 and allt["expense"] == 10000 - 2000 - 1000 - 700 - 1700
+    off = an.money_flow(10000, {"all": 2000.0}, none_m, none_r, sv, None)         # switched off: nothing taken out
+    assert off["insurance"] == 0 and off["loans"] == 0 and off["expense"] == 7000
