@@ -383,16 +383,16 @@ with tabs[0]:
     plan_main, plan_subs = db.get_target_main(), db.get_target_sub()
     plan = an.target_plan(plan_main, plan_subs, income_total)
     m_sum = sum(plan_main.values())
-    grow = sum(plan_main.get(k, 0.0) for k in ("Savings", "Investment", "Real-Estate", "Trading"))
+    grow = sum(plan_main.get(k, 0.0) for k in ("Savings", "Investment", "Real-Estate", "Business & Trading"))
     spend = sum(plan_main.get(k, 0.0) for k in ("EMI", "Expenses & Leisure"))
     c = st.columns(4)
     kpi(c[0], f"Income ({period})", income_total)
-    kpi(c[1], "Planned to save + invest", f"{grow:.1f}% of income", help="Savings + Investment + Real-Estate + Trading")
+    kpi(c[1], "Planned to save + invest", f"{grow:.1f}% of income", help="Savings + Investment + Real-Estate + Business & Trading")
     kpi(c[2], "Planned EMI + expenses & leisure", f"{spend:.1f}% of income")
     kpi(c[3], "Not allocated", f"{100 - m_sum:.1f}% of income")
     if not plan_main:
         st.info("No ideal plan yet. Open “Set ideal values” below to split your income into Savings, Investment, "
-                "Real-Estate, Trading, EMI and Expenses & Leisure, and then divide Investment further.")
+                "Real-Estate, Business & Trading, EMI and Expenses & Leisure, and then divide Investment further.")
     else:
         actual = an.main_actuals(flow)
         rows = []
@@ -413,7 +413,7 @@ with tabs[0]:
             "Left (ideal − actual) ₹": st.column_config.NumberColumn(format="₹%.0f")})
         st.caption("Actual comes from “Where the income went” above: Savings = saved, Investment = stocks, funds and gold/silver "
                    "bought, Real-Estate = property bought, EMI = loan payments, Expenses = what is left plus insurance "
-                   "(leisure is not tracked apart, so it is inside Expenses). Trading cannot be told apart from other stock "
+                   "(leisure is not tracked apart, so it is inside Expenses). Business & Trading cannot be told apart from other stock "
                    "buying, so it shows –.")
         if not plan.empty and plan["sub"].notna().any():
             st.markdown("**Divided further** (each row is a share of its category)")

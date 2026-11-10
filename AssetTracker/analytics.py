@@ -718,10 +718,10 @@ def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
 
 
 def main_actuals(flow: dict) -> dict[str, float | None]:
-    """What really went into each main category in the period, from money_flow. Trading cannot be told apart from the
+    """What really went into each main category in the period, from money_flow. Business & Trading cannot be told apart from the
     other stock buying, so it is None; Expenses includes insurance premiums and leisure (they are not tracked apart)."""
     return {"Savings": flow["saved"], "Investment": flow["stocks"] + flow["metals"], "Real-Estate": flow["real_estate"],
-            "Trading": None, "EMI": flow["loans"], "Expenses & Leisure": flow["expense"] + flow["insurance"]}
+            "Business & Trading": None, "EMI": flow["loans"], "Expenses & Leisure": flow["expense"] + flow["insurance"]}
 
 
 def allocation(buckets: pd.DataFrame, pcts: dict[str, float], income: float) -> pd.DataFrame:

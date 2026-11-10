@@ -35,7 +35,7 @@ DEFAULT_PURITY = {"Gold": "24K", "Silver": "999"}
 DEFAULT_PREMIUM = {"Gold": 6.0, "Silver": 6.0}
 SAVINGS_BUCKET = "Cash & Savings"
 # the ideal plan: income is first split into these main categories, each of which can be divided further
-MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Trading", "EMI", "Expenses & Leisure"]
+MAIN_CATEGORIES = ["Savings", "Investment", "Real-Estate", "Business & Trading", "EMI", "Expenses & Leisure"]
 # in the ideal plan and its chart, index funds and ETFs are one type, and gold and silver are one type
 PLAN_GROUP = {"Index Funds": "Index Funds & ETFs", "ETFs": "Index Funds & ETFs", "Gold": "Gold & Silver", "Silver": "Gold & Silver"}
 INVESTMENT_PLAN_BUCKETS = list(dict.fromkeys(PLAN_GROUP.get(c, c) for c in SECURITY_CATEGORIES + METALS))
