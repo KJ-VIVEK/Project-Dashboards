@@ -671,6 +671,57 @@ def bucket_values(positions: pd.DataFrame, metals: pd.DataFrame, real_estate: pd
     return pd.DataFrame(rows, columns=["bucket", "value", "invested"])
 
 
+def target_plan(main: dict, subs: pd.DataFrame, income: float) -> pd.DataFrame:
+    """The ideal plan as one table. A main row per category (its % of income) followed by its sub-category rows.
+
+    pct_of_category: the % of the category's share given to the sub-category.
+    pct_of_income:   main % x sub % / 100, i.e. a share of the whole income (40% investment, 50% of it in mutual funds
+                     -> 20% of income). amount = income x pct_of_income.
+    A category whose sub-categories add up to less than 100% gets an 'Not divided yet' row for the rest."""
+    rows = []
+    for cat in db.MAIN_CATEGORIES:
+        m = float(main.get(cat, 0.0) or 0.0)
+        part = subs[subs["category"] == cat] if len(subs) else subs
+        if not m and part.empty:
+            continue
+        rows.append({"category": cat, "sub": None, "pct_of_category": 100.0 if m else 0.0, "pct_of_income": m,
+                     "amount": income * m / 100})
+        used = 0.0
+        for _, r in part.iterrows():
+            p = float(r["pct"] or 0.0)
+            used += p
+            rows.append({"category": cat, "sub": r["sub"], "pct_of_category": p, "pct_of_income": m * p / 100,
+                         "amount": income * m * p / 10000})
+        if m and 0 < used < 100 - 1e-9:
+            rows.append({"category": cat, "sub": "Not divided yet", "pct_of_category": 100 - used,
+                         "pct_of_income": m * (100 - used) / 100, "amount": income * m * (100 - used) / 10000})
+    return pd.DataFrame(rows, columns=["category", "sub", "pct_of_category", "pct_of_income", "amount"])
+
+
+def bucket_targets(main: dict, subs: pd.DataFrame) -> dict[str, float]:
+    """The ideal % of income for each holding bucket, taken from the plan (for the ideal-vs-reality chart):
+    Savings -> Cash & Savings, Real-Estate -> Real Estate, and each Investment sub-category named like a bucket
+    (a stock category, Gold or Silver) -> that bucket."""
+    out: dict[str, float] = {}
+    if main.get("Savings"):
+        out[db.SAVINGS_BUCKET] = float(main["Savings"])
+    if main.get("Real-Estate"):
+        out["Real Estate"] = float(main["Real-Estate"])
+    inv = float(main.get("Investment", 0.0) or 0.0)
+    if inv and len(subs):
+        for _, r in subs[subs["category"] == "Investment"].iterrows():
+            if r["sub"] in db.INVESTMENT_PLAN_BUCKETS:
+                out[r["sub"]] = out.get(r["sub"], 0.0) + inv * float(r["pct"] or 0.0) / 100
+    return out
+
+
+def main_actuals(flow: dict) -> dict[str, float | None]:
+    """What really went into each main category in the period, from money_flow. Trading cannot be told apart from the
+    other stock buying, so it is None; Expenses includes insurance premiums and leisure (they are not tracked apart)."""
+    return {"Savings": flow["saved"], "Investment": flow["stocks"] + flow["metals"], "Real-Estate": flow["real_estate"],
+            "Trading": None, "EMI": flow["loans"], "Expenses": flow["expense"] + flow["insurance"], "Leisure": None}
+
+
 def allocation(buckets: pd.DataFrame, pcts: dict[str, float], income: float) -> pd.DataFrame:
     """Ideal vs reality per bucket. Ideal = income x the % the user chose for that bucket.
 

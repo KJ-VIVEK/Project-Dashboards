@@ -181,3 +181,41 @@ def validate(table: str, df: pd.DataFrame, required=()) -> list[str]:
                 not _blank(row.get("start_date")) and not _blank(row.get("end_date"))):
             bad(f"A “{db.ONE_TIME}” premium needs both a start and an end date.")
     return errors
+
+
+def validate_targets(main: dict, subs: pd.DataFrame) -> list[str]:
+    """Problems with an ideal plan: main % of income add up to at most 100, and within each category the sub-categories
+    add up to at most 100% of it, with named, unrepeated rows."""
+    errors: list[str] = []
+    for cat, pct in main.items():
+        n = _num(pct)
+        if pct is not None and not _blank(pct) and (n is None or not 0 <= n <= 100):
+            errors.append(f"{cat}: % of income must be between 0 and 100 (got {pct}).")
+    total = sum(_num(v) or 0 for v in main.values())
+    if total > 100 + 1e-6:
+        errors.append(f"The main categories add up to {total:g}% of income. They can be at most 100%.")
+    seen: dict[tuple, int] = {}
+    sums: dict[str, float] = {}
+    for pos, (_, r) in enumerate(subs.iterrows(), start=1):
+        cat, sub, pct = r.get("category"), r.get("sub"), r.get("pct")
+        if _blank(cat) and _blank(sub) and _blank(pct):
+            continue
+        if cat not in db.MAIN_CATEGORIES:
+            errors.append(f"Row {pos}: choose a main category.")
+            continue
+        if _blank(sub):
+            errors.append(f"Row {pos} ({cat}): the sub-category needs a name.")
+            continue
+        n = _num(pct) if not _blank(pct) else 0.0
+        if n is None or not 0 <= n <= 100:
+            errors.append(f"Row {pos} ({cat} → {sub}): % of {cat} must be between 0 and 100 (got {pct}).")
+            continue
+        key = (cat, str(sub).strip().casefold())
+        if key in seen:
+            errors.append(f"Row {pos} ({cat} → {sub}) repeats row {seen[key]}.")
+        seen.setdefault(key, pos)
+        sums[cat] = sums.get(cat, 0.0) + n
+    for cat, s in sums.items():
+        if s > 100 + 1e-6:
+            errors.append(f"{cat}: its sub-categories add up to {s:g}% of {cat}. They can be at most 100%.")
+    return errors
