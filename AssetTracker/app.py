@@ -248,6 +248,8 @@ loans = db.get_table("loans")
 loan_paid = an.loan_payments(loans)
 metals = db.get_table("metals")
 real_estate = db.get_table("real_estate")
+business = db.get_table("business")
+biz_f = an.business_frame(business)
 notes = db.get_table("notes")
 prices = db.metal_prices()
 fx = db.usd_inr()
@@ -287,7 +289,7 @@ with st.sidebar:
 
 st.title("Asset Tracker")
 tabs = st.tabs(["Summary", "Source", "Cash & Savings", "Insurance", "Loans", "Stocks",
-                "Gold & Silver", "Real Estate", "Notes"])
+                "Gold & Silver", "Real Estate", "Business", "Notes"])
 
 # ================================================================== 1. SUMMARY
 with tabs[0]:
@@ -345,10 +347,10 @@ with tabs[0]:
     # ---- where the income went:  Expense = Income - Investments - Savings
     st.subheader("Where the income went")
     flow = an.money_flow(income_total, an.stock_net_invested(trades, securities, realised, fx),
-                         metals_f, re_f, savings, yr, prem_paid if prem_on else None, loan_paid if loans_on else None)
+                         metals_f, re_f, savings, yr, prem_paid if prem_on else None, loan_paid if loans_on else None, business)
     c = st.columns(6)
     kpi(c[0], "Income", flow["income"])
-    kpi(c[1], "Invested", flow["invested"], help="New money put into stocks/funds, gold & silver and property")
+    kpi(c[1], "Invested", flow["invested"], help="New money put into stocks/funds, gold & silver, property and businesses")
     kpi(c[2], "Saved", flow["saved"], help="Cash, FD, EPF, NPS and goal balances" + (
         "; for a single year, only entries with a start date in it" if yr else ""))
     kpi(c[3], "Insurance", flow["insurance"], help="Premiums actually paid in the period (Insurance tab)")
@@ -363,14 +365,14 @@ with tabs[0]:
                    "Add the missing income on the Source tab, or pick 'All time'.")
     if flow["income"] > 0:
         labels = ["Income", "Investments", "Saved", "Insurance", "Loans", "Expenses", "Stocks & funds", "Gold & silver",
-                  "Real estate"]
+                  "Real estate", "Business"]
         links = [(0, 1, flow["invested"]), (0, 2, flow["saved"]), (0, 3, flow["insurance"]), (0, 4, flow["loans"]),
                  (0, 5, max(flow["expense"], 0)),
-                 (1, 6, flow["stocks"]), (1, 7, flow["metals"]), (1, 8, flow["real_estate"])]
+                 (1, 6, flow["stocks"]), (1, 7, flow["metals"]), (1, 8, flow["real_estate"]), (1, 9, flow["business"])]
         links = [l for l in links if l[2] > 0]
         fig = go.Figure(go.Sankey(
             node=dict(label=labels, pad=18, thickness=14, color=[REAL, "#6250d6", "#1baf7a", "#c2185b", "#d6403a",
-                                                                  "#eb6834", "#a396ea", "#eda100", "#8c5a3c"]),
+                                                                  "#eb6834", "#a396ea", "#eda100", "#8c5a3c", "#2f8f9d"]),
             link=dict(source=[l[0] for l in links], target=[l[1] for l in links], value=[l[2] for l in links],
                       color="rgba(137,135,129,0.25)")))
         show(style(fig, "Income → investments, savings, insurance, loans and expenses", height=340))
@@ -379,7 +381,7 @@ with tabs[0]:
                        "a month from the month after the start date.")
 
     # ---- the ideal plan: income -> main categories -> sub-categories
-    st.subheader("Ideal plan: where income should go")
+    st.subheader("Plan vs reality: where income should go")
     plan_main, plan_subs = db.get_target_main(), db.get_target_sub()
     plan = an.target_plan(plan_main, plan_subs, income_total)
     m_sum = sum(plan_main.values())
@@ -412,9 +414,16 @@ with tabs[0]:
             "Actual % of income": st.column_config.NumberColumn(format="%.1f%%"),
             "Left (ideal − actual) ₹": st.column_config.NumberColumn(format="₹%.0f")})
         st.caption("Actual comes from “Where the income went” above: Savings = saved, Investment = stocks, funds and gold/silver "
-                   "bought, Real-Estate = property bought, EMI = loan payments, Expenses = what is left plus insurance "
-                   "(leisure is not tracked apart, so it is inside Expenses). Business & Trading cannot be told apart from other stock "
-                   "buying, so it shows –.")
+                   "bought, Real-Estate = property bought, Business & Trading = money put into businesses (Business tab), "
+                   "EMI = loan payments, Expenses & Leisure = what is left plus insurance. Each investment type is "
+                   "detailed on its own tab (Stocks, Gold & Silver, Real Estate) and in the table below.")
+        cmp_ = mt[mt["Actual ₹"].notna()]
+        fig = go.Figure()
+        fig.add_bar(y=mt["Category"], x=mt["Ideal ₹"], name="Plan (income × %)", orientation="h", marker_color=IDEAL)
+        fig.add_bar(y=cmp_["Category"], x=cmp_["Actual ₹"], name="Reality (what happened)", orientation="h", marker_color=REAL)
+        fig.update_layout(barmode="group", yaxis=dict(autorange="reversed"))
+        fig.update_xaxes(tickprefix="₹", tickformat="~s")
+        show(style(fig, "Plan vs reality: where the income should go and where it went", height=max(320, 80 * len(mt))))
         if not plan.empty and plan["sub"].notna().any():
             st.markdown("**Divided further** (each row is a share of its category)")
             sub_tbl = plan.copy()
@@ -426,33 +435,6 @@ with tabs[0]:
                 "% of category": st.column_config.NumberColumn(format="%.1f%%"),
                 "% of income": st.column_config.NumberColumn(format="%.1f%%"),
                 "Ideal ₹": st.column_config.NumberColumn(format="₹%.0f")})
-
-    st.subheader("Investments: ideal vs reality")
-    pcts = an.bucket_targets(plan_main, plan_subs)
-    alloc = an.allocation(buckets, pcts, income_total)
-    st.caption("**Ideal = income × the main % × the share you gave each type.** Reality = current value of what you hold. "
-               "Cash & Savings and Real Estate use the whole Savings and Real-Estate shares; investment types use the "
-               "second table.")
-    a = alloc[(alloc["value"] > 0) | (alloc["target"] > 0)]
-    left, right = st.columns([3, 2])
-    with left:
-        fig = go.Figure()
-        fig.add_bar(y=a["bucket"], x=a["target"], name="Ideal (income × %)", orientation="h", marker_color=IDEAL)
-        fig.add_bar(y=a["bucket"], x=a["value"], name="Reality (current value)", orientation="h", marker_color=REAL)
-        fig.update_layout(barmode="group", yaxis=dict(autorange="reversed"))
-        fig.update_xaxes(tickprefix="₹", tickformat="~s")
-        show(style(fig, "Ideal vs reality by bucket", height=max(320, 70 * len(a))))
-    with right:
-        held = alloc[alloc["value"] > 0]
-        if not held.empty:
-            fig = go.Figure(go.Pie(labels=held["bucket"], values=held["value"], hole=0.55, sort=False,
-                                   marker_colors=BUCKET_COLORS[:len(held)], textinfo="percent"))
-            show(style(fig, "Current allocation"))
-    table = alloc[["bucket", "invested", "value", "actual_pct", "target_pct", "target", "gap"]].rename(columns={
-        "bucket": "Bucket", "invested": "Invested", "value": "Current value", "actual_pct": "Actual % of income",
-        "target_pct": "Ideal %", "target": "Ideal ₹", "gap": "Left to invest (−: over)"})
-    st.dataframe(fmt_df(table, ["Invested", "Current value", "Ideal ₹", "Left to invest (−: over)"],
-                        ["Actual % of income", "Ideal %"]), hide_index=True, width="stretch")
 
     with st.expander("Set ideal values"):
         st.markdown("**1. Split your income**")
@@ -1717,8 +1699,90 @@ with tabs[7]:
             "monthly_rent": money_cfg("Rent / month (₹)"), "current_per_sqft": money_cfg("Price / sq ft now (₹)"),
             "note": "Note"}, ("name", "cost"), "real_estate")
 
-# ================================================================== 9. NOTES
+# ================================================================== 9. BUSINESS
+BIZ_COLUMNS = ["name", "kind", "what", "started_on", "invested", "money_made", "money_lost", "status", "closed_on",
+               "current_value", "note"]
 with tabs[8]:
+    run = biz_f[biz_f["status"] == "Running"]
+    c = st.columns(5)
+    kpi(c[0], "Invested", biz_f["invested"].sum(), help="Capital put into all businesses")
+    kpi(c[1], "Money made", biz_f["money_made"].sum())
+    kpi(c[2], "Money lost", biz_f["money_lost"].sum(), help="Losses along the way, not the capital you put in")
+    kpi(c[3], "Net result", biz_f["net"].sum(), help="Money made − money lost")
+    kpi(c[4], "Running / closed", f"{len(run)} / {len(biz_f) - len(run)}")
+    st.write("")
+
+    with st.expander("Add a business or trade", icon=":material/storefront:", expanded=biz_f.empty):
+        with st.form("add_biz", clear_on_submit=True, border=False):
+            c = st.columns(3)
+            nm = c[0].text_input("Name", placeholder="e.g. Cloud kitchen")
+            kind = c[1].selectbox("Type", db.BUSINESS_KINDS)
+            what = c[2].text_input("What was invested in", placeholder="e.g. equipment, stock, a partner's share")
+            c = st.columns(4)
+            inv = c[0].number_input("Invested (₹)", min_value=0.0, step=10000.0, format="%.0f")
+            made = c[1].number_input("Money made so far (₹)", min_value=0.0, step=1000.0, format="%.0f")
+            lost = c[2].number_input("Money lost so far (₹)", min_value=0.0, step=1000.0, format="%.0f",
+                                     help="Losses along the way, not the capital you invested")
+            val = c[3].number_input("Value now (₹)", min_value=0.0, step=10000.0, format="%.0f",
+                                    help="Optional, for a running business: what the stake is worth today")
+            c = st.columns(3)
+            start = dinput(c[0], "Started on", value=None)
+            status = c[1].selectbox("Status", db.BUSINESS_STATUSES)
+            closed = dinput(c[2], "Closed on", value=None)
+            note = st.text_input("Note")
+            if st.form_submit_button("Add business", type="primary") and not partial_dates("Started on", "Closed on"):
+                if not nm.strip() or inv <= 0:
+                    st.error("A name and an invested amount above zero are needed.")
+                elif status == "Closed" and not closed:
+                    st.error("A closed business needs the date it was closed.")
+                elif start and closed and closed < start:
+                    st.error("It cannot be closed before it started.")
+                else:
+                    db.insert("business", {"name": nm, "kind": kind, "what": what, "started_on": start, "invested": inv,
+                                           "money_made": made or None, "money_lost": lost or None, "status": status,
+                                           "closed_on": closed if status == "Closed" else None,
+                                           "current_value": val or None, "note": note})
+                    flash("Business added.")
+                    st.rerun()
+
+    for _, r in biz_f.iterrows():
+        with st.container(border=True):
+            bits = [x for x in (an._txt(r["kind"]), an._txt(r["what"]), f"started {r['started_on']}" if pd.notna(r["started_on"]) else None,
+                                f"closed {r['closed_on']}" if r["status"] == "Closed" and pd.notna(r["closed_on"]) else None,
+                                f"{r['months']:g} months" if pd.notna(r["months"]) else None) if x]
+            st.markdown(f"#### {r['name']}  ·  {'🟢 Running' if r['status'] == 'Running' else '⚪ Closed'}")
+            st.caption(" · ".join(bits) or "No details yet")
+            c = st.columns(5)
+            c[0].metric("Invested", an.inr(r["invested"]))
+            c[1].metric("Money made", an.inr(r["money_made"]))
+            c[2].metric("Money lost", an.inr(r["money_lost"]))
+            c[3].metric("Net result", an.inr(r["net"]), f"{r['roi_pct']:+.1f}% of invested", delta_color="normal")
+            c[4].metric("Overall gain / loss", an.inr(r["overall"]),
+                        help="Value now + made − lost − invested for a running business with a value now; "
+                             "otherwise made − lost − invested")
+            if pd.notna(r["current_value"]) and r["status"] == "Running":
+                st.caption(f"Value now: {an.inr(r['current_value'])}")
+            if an._txt(r["note"]):
+                st.caption(r["note"])
+    if biz_f.empty:
+        st.info("No businesses yet. Use Add a business or trade above.")
+    else:
+        st.caption("Net result = money made − money lost. Overall gain / loss also takes the capital you put in "
+                   "into account (and the value now, if you gave one). The money invested is counted under Business & "
+                   "Trading on the Summary, by the date it started.")
+
+    with st.expander("Edit or delete businesses", icon=":material/edit:"):
+        edit_table("business", business, business, {
+            "name": st.column_config.TextColumn("Name", required=True),
+            "kind": st.column_config.SelectboxColumn("Type", options=db.BUSINESS_KINDS),
+            "what": "Invested in", "started_on": dcol("Started on"),
+            "invested": money_cfg("Invested (₹)", required=True), "money_made": money_cfg("Money made (₹)"),
+            "money_lost": money_cfg("Money lost (₹)"), "current_value": money_cfg("Value now (₹)"),
+            "status": st.column_config.SelectboxColumn("Status", options=db.BUSINESS_STATUSES, required=True),
+            "closed_on": dcol("Closed on"), "note": "Note"}, ("name", "invested"), "business")
+
+# ================================================================== 10. NOTES
+with tabs[9]:
     with st.form("add_note", clear_on_submit=True):
         c = st.columns([3, 1], vertical_alignment="bottom")
         title = c[0].text_input("Title")

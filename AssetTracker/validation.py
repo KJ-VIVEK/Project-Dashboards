@@ -27,6 +27,7 @@ LABELS = {
     "monthly_rent": "Rent per month", "current_per_sqft": "Current price per sq ft", "purchase_date": "Purchased on",
     "maturity_date": "Maturity date", "target": "Goal / target", "title": "Title", "description": "Description",
     "price_date": "Price as of", "tax_paid": "Taxes paid", "other_deductions": "EPF or NPS or Vouchers or Insurance", "tax_pct": "Extra tax %", "interest_earned": "Interest earned", "auto_renew": "Renewed after maturity",
+    "started_on": "Started on", "money_made": "Money made", "money_lost": "Money lost", "current_value": "Value now",
     "temp_closed": "Temporarily closed", "closed_on": "Closed on", "rsu_qty": "Shares vested", "rsu_buy_price": "Buy price", "rsu_sold_qty": "Shares sold for tax",
     "rsu_sell_price": "Sell price", "rsu_sell_date": "Sell date", "rsu_sell_fx": "USD to INR on the sell date",
 }
@@ -54,13 +55,16 @@ RULES: dict[str, dict[str, tuple]] = {
     "dividends": {"amount": (">", 0)},
     "metals": {"metal": ("in", db.METALS), "grams": (">", 0), "rate_per_g": (">", 0), "making_charges": (">=", 0),
                "gst": (">=", 0), "other_charges": (">=", 0)},
+    "business": {"kind": ("in", db.BUSINESS_KINDS), "status": ("in", db.BUSINESS_STATUSES), "invested": (">", 0),
+                 "money_made": (">=", 0), "money_lost": (">=", 0), "current_value": (">=", 0)},
     "real_estate": {"cost": (">", 0), "area_sqft": (">=", 0), "registration": (">=", 0), "brokerage": (">=", 0),
                     "other_charges": (">=", 0), "monthly_rent": (">=", 0), "current_per_sqft": (">=", 0)},
 }
 
 # (earlier date column, later date column): the later one may not come before the earlier one
 ORDERED_DATES = {"savings": [("start_date", "maturity_date")], "insurance": [("start_date", "end_date")],
-                 "loans": [("start_date", "end_date"), ("start_date", "closed_date")]}
+                 "loans": [("start_date", "end_date"), ("start_date", "closed_date")],
+                 "business": [("started_on", "closed_on")]}
 
 
 def _blank(v) -> bool:
@@ -151,6 +155,8 @@ def validate(table: str, df: pd.DataFrame, required=()) -> list[str]:
             elif n is not None and n < 0 and row.get("source") in db.DEDUCTION_SOURCES:
                 bad("A Taxes Paid row is entered as a positive amount (it is subtracted for you). "
                     "Use a negative amount under another source for a loss.")
+        if table == "business" and row.get("status") == "Closed" and _blank(row.get("closed_on")):
+            bad("A closed business needs the date it was closed.")
         if table == "loans" and not _blank(row.get("installments_paid")):
             n = _num(row["installments_paid"])
             if n is not None and n != int(n):
